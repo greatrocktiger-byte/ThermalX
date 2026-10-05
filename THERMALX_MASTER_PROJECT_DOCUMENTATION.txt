@@ -1,0 +1,815 @@
+====================================================================================================
+               THERMALX — 2D SEMICONDUCTOR NUMERICAL THERMAL SIMULATION SUITE
+====================================================================================================
+Comprehensive Academic Documentation, Mathematical Derivations, Software Architecture,
+PPT Presentation Blueprint, and Viva Voce Defense Guide.
+
+Project Name:       ThermalX (v2.4 PRO)
+Course / Subject:   Computational Mathematics / Numerical Methods & Analysis / Scientific Computing
+Target System:      2D Steady-State Heat Conduction across Semiconductor Packaging (CPU/GPU/Battery)
+Author / Developer: greatrocktiger-byte
+Repository:         https://github.com/greatrocktiger-byte/ThermalX
+Live Web Platform:  https://greatrocktiger-byte.github.io/ThermalX/
+====================================================================================================
+
+
+----------------------------------------------------------------------------------------------------
+TABLE OF CONTENTS:
+----------------------------------------------------------------------------------------------------
+  1. Executive Summary & Project Abstract
+  2. Problem Statement & Industrial Motivation
+  3. University Syllabus Mapping & Core Topics
+  4. Exhaustive Mathematical Formulations & Derivations
+     4.1 The Continuous Governing PDE (Poisson & Laplace Equations)
+     4.2 Discretization via 5-Point Laplacian Finite Difference Stencil (FDM)
+     4.3 Iterative Linear Solvers: Jacobi vs Gauss-Seidel vs SOR
+     4.4 Young's Theorem & Matrix Spectral Radius Proof (2x Speedup)
+     4.5 Vector Calculus: Gradient Operator (∇T) and Fourier's Law
+     4.6 Non-Linear Root Finding: Bisection Method for Cooling Optimization
+     4.7 Multi-Run Parametric Drift & Differential Heat Distribution (ΔT)
+  5. Technical Architecture & File Directory Structure
+  6. Python Code Walkthrough (File-by-File Detailed Logic)
+     6.1 thermal_solver.py
+     6.2 gradient_quiver_plotter.py
+     6.3 bisection_optimizer.py
+     6.4 syllabus_verification.py
+     6.5 run_history_analyzer.py
+     6.6 main.py
+  7. Web Visualizer & Graphical Analytics Dashboard Logic
+     7.1 HTML5 High-DPI Real-Time PDE Canvas Solver
+     7.2 Multi-Run Dual-Envelope Curves (Blue Min vs Red Max Curves)
+     7.3 Single-Run Spatial Gradient (∇T) Profile & Dynamic Scrubbing
+  8. Ready-to-Use 10-Slide PPT Presentation Blueprint (For Friend)
+  9. Viva Voce Defense Handbook (Top 15 Questions & Exact Academic Answers)
+  10. Execution Instructions (Local & Cloud)
+====================================================================================================
+
+
+====================================================================================================
+1. EXECUTIVE SUMMARY & PROJECT ABSTRACT
+====================================================================================================
+ThermalX is a state-of-the-art computational mathematics software suite designed to simulate, analyze,
+and optimize steady-state heat conduction across modern semiconductor architectures (such as high-power
+x86 octa-core CPU dies, discrete GPU packages, and lithium-ion batteries mounted on FR4 multi-layer
+substrates).
+
+The software bridges rigorous academic numerical theory with production-grade interactive computing:
+1. A pure Python numerical analysis suite implementing Finite Difference Methods (FDM), iterative linear
+   algebraic solvers (Jacobi, Gauss-Seidel, Successive Over-Relaxation), spectral radius convergence
+   theorems (Young's Theorem), vector calculus heat-flux quiver fields, and non-linear Bisection
+   root-finding.
+2. A high-performance cybernetic web application running client-side finite difference simulation,
+   dual-envelope multi-run temperature curves, differential heatmaps (ΔT), and live telemetry graphs.
+
+All algorithms are grounded directly in the standard University curriculum for Numerical Analysis and
+Computational Linear Algebra.
+
+
+====================================================================================================
+2. PROBLEM STATEMENT & INDUSTRIAL MOTIVATION
+====================================================================================================
+In high-performance computing (smartphones, ultra-thin gaming laptops, data-center server blades),
+silicon chips generate enormous thermal energy within micro-scale volumes:
+- Modern CPU dies dissipate 45W - 95W of power over areas less than 1.5 cm².
+- Thermal flux exceeds 60 W/cm², comparable to the surface heat flux of a nuclear reactor core.
+- Uneven heat dissipation leads to localized "Hotspots". Excessive temperatures (>100°C) cause
+  permanent silicon degradation, electromigration, and severe thermal throttling.
+
+Traditional analytical solutions (e.g. Fourier series separation of variables) fail on realistic
+geometries because modern laptop motherboards have non-uniform internal heat sources, non-linear
+boundary cooling, and heterogeneous conduction paths.
+
+Therefore, engineers must discretize the governing Elliptic Partial Differential Equation into a
+computational mesh and solve large systems of linear algebraic equations using numerical iterative
+methods. ThermalX provides the complete mathematical framework to solve and visualize this challenge.
+
+
+====================================================================================================
+3. UNIVERSITY SYLLABUS MAPPING & CORE TOPICS
+====================================================================================================
+ThermalX directly implements the following core syllabus units of Computational Mathematics:
+
+----------------------------------------------------------------------------------------------------
+Syllabus Unit             Theoretical Concept                ThermalX Real-World Implementation
+----------------------------------------------------------------------------------------------------
+Unit 1: Numerical PDEs    2D Elliptic PDEs                   Poisson & Laplace equations across
+                          (Poisson / Laplace)                laptop chassis substrate.
+
+Unit 2: Finite Difference 5-Point Laplacian Stencil          Discretization of continuous 2D domain
+        Methods (FDM)     Second-order central differences   into 40x40 node computational mesh.
+
+Unit 3: Iterative Linear  Jacobi Iteration                   Simultaneous displacement solver;
+        Solvers           Gauss-Seidel Iteration             Successive in-place displacement solver;
+                          Successive Over-Relaxation (SOR)   Accelerated solver with optimal omega.
+
+Unit 4: Matrix Theory &   Spectral Radius ρ(G)               Mathematical verification that
+        Convergence       Young's Theorem on 2-Cyclic        ρ(G_GS) = [ρ(G_J)]² and Gauss-Seidel
+                          Consistently Ordered Matrices      converges exactly 2x faster.
+
+Unit 5: Vector Calculus   Spatial Gradient ∇T                Computation of temperature slope |∇T|
+                          Fourier's Law: q = -k ∇T           and vector heat flux quiver fields.
+
+Unit 6: Non-Linear Root   Intermediate Value Theorem         Bisection method finding active fan air
+        Finding           (Bolzano's Theorem), Bisection     velocity v* to prevent die overheating.
+
+Unit 7: Parametric Drift  Differential PDEs                  Computing ΔT(x,y) = T_curr - T_prev
+        & Sensitivity     Multi-run sensitivity tracking     and dual-envelope min-max heat curves.
+----------------------------------------------------------------------------------------------------
+
+
+====================================================================================================
+4. EXHAUSTIVE MATHEMATICAL FORMULATIONS & DERIVATIONS
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+4.1 THE CONTINUOUS GOVERNING PDE (POISSON & LAPLACE EQUATIONS)
+----------------------------------------------------------------------------------------------------
+By Fourier's First Law of Heat Conduction, heat flux vector q (W/m²) is proportional to the negative
+gradient of temperature:
+    q = -k · ∇T = -k [ (∂T/∂x) i + (∂T/∂y) j ]
+
+Where:
+    k = Thermal conductivity of the material (W/m·K)
+    ∇T = Spatial temperature gradient vector (°C/m)
+
+Applying conservation of thermal energy to an infinitesimal control volume (dx · dy · dz) under steady-
+state conditions (∂T/∂t = 0):
+    Net Conductive Inflow + Internal Heat Generation = 0
+    -∇ · q + q_gen = 0
+    -∇ · (-k · ∇T) + q_gen = 0
+
+Assuming isotropic and homogeneous thermal conductivity k = constant:
+    k · ∇²T + q_gen = 0
+    ∇²T(x,y) = - q_gen(x,y) / k
+
+In Cartesian 2D coordinates, this is the 2D Elliptic Poisson Equation:
+    (∂²T / ∂x²) + (∂²T / ∂y²) = - q_gen(x,y) / k
+
+In regions without active internal heat sources (such as passive chassis zones), q_gen = 0, reducing
+the governing equation to the celebrated 2D Laplace Equation:
+    ∇²T = (∂²T / ∂x²) + (∂²T / ∂y²) = 0
+
+
+----------------------------------------------------------------------------------------------------
+4.2 DISCRETIZATION VIA 5-POINT LAPLACIAN FINITE DIFFERENCE STENCIL (FDM)
+----------------------------------------------------------------------------------------------------
+Let the spatial 2D domain be discretized by uniform grid spacing:
+    x_i = i · Δx,   for i = 0, 1, 2, ..., N
+    y_j = j · Δy,   for j = 0, 1, 2, ..., M
+    T_{i,j} = T(x_i, y_j)
+
+Using Taylor's Theorem to expand T about the point (x_i, y_j):
+Along the x-axis:
+    T(x_i + Δx, y_j) = T_{i,j} + Δx (∂T/∂x) + (Δx²/2)(∂²T/∂x²) + (Δx³/6)(∂³T/∂x³) + O(Δx⁴)
+    T(x_i - Δx, y_j) = T_{i,j} - Δx (∂T/∂x) + (Δx²/2)(∂²T/∂x²) - (Δx³/6)(∂³T/∂x³) + O(Δx⁴)
+
+Adding both equations eliminates the odd-order derivative terms:
+    T_{i+1,j} + T_{i-1,j} = 2 T_{i,j} + Δx² (∂²T/∂x²) + O(Δx⁴)
+    ∂²T/∂x² = (T_{i+1,j} - 2 T_{i,j} + T_{i-1,j}) / (Δx²) + O(Δx²)
+
+Similarly, along the y-axis:
+    ∂²T/∂y² = (T_{i,j+1} - 2 T_{i,j} + T_{i,j-1}) / (Δy²) + O(Δy²)
+
+Substituting these second-order central difference approximations into the Poisson PDE:
+    (T_{i+1,j} - 2 T_{i,j} + T_{i-1,j}) / (Δx²) + (T_{i,j+1} - 2 T_{i,j} + T_{i,j-1}) / (Δy²) = - q_{i,j} / k
+
+Assuming square grid cells (Δx = Δy = h):
+    T_{i+1,j} + T_{i-1,j} + T_{i,j+1} + T_{i,j-1} - 4 T_{i,j} = - (h² · q_{i,j}) / k
+
+Solving explicitly for the central node temperature T_{i,j}:
+    T_{i,j} = [ T_{i+1,j} + T_{i-1,j} + T_{i,j+1} + T_{i,j-1} ] / 4 + (h² · q_{i,j}) / (4 k)
+
+This is the classical 5-Point Laplacian Stencil. In source-free nodes (q_{i,j} = 0):
+    T_{i,j} = ( T_{i+1,j} + T_{i-1,j} + T_{i,j+1} + T_{i,j-1} ) / 4
+Meaning every node's temperature equals the exact arithmetic mean of its 4 orthogonal neighbors!
+
+
+----------------------------------------------------------------------------------------------------
+4.3 ITERATIVE LINEAR SOLVERS: JACOBI VS GAUSS-SEIDEL VS SOR
+----------------------------------------------------------------------------------------------------
+For a grid of N x M unknown interior nodes, writing the 5-point stencil for every node yields a large
+sparse linear system:
+    A · T = b
+
+Where A is a pentadiagonal, strictly diagonally dominant matrix. Decomposing A into diagonal (D),
+strictly lower triangular (-L), and strictly upper triangular (-U) components:
+    A = D - L - U
+
+1. Jacobi Iteration (Simultaneous Displacement):
+   Uses values strictly from the previous iteration k:
+       T_{i,j}^{(k+1)} = ( T_{i+1,j}^{(k)} + T_{i-1,j}^{(k)} + T_{i,j+1}^{(k)} + T_{i,j-1}^{(k)} ) / 4
+   Matrix Form:
+       T^{(k+1)} = D⁻¹ (L + U) T^{(k)} + D⁻¹ b
+       Iteration Matrix: G_J = D⁻¹ (L + U)
+
+2. Gauss-Seidel Iteration (Successive In-Place Displacement):
+   Immediately uses updated values as soon as they are computed in the current sweep:
+       T_{i,j}^{(k+1)} = ( T_{i+1,j}^{(k)} + T_{i-1,j}^{(k+1)} + T_{i,j+1}^{(k)} + T_{i,j-1}^{(k+1)} ) / 4
+   Matrix Form:
+       (D - L) T^{(k+1)} = U T^{(k)} + b
+       T^{(k+1)} = (D - L)⁻¹ U T^{(k)} + (D - L)⁻¹ b
+       Iteration Matrix: G_GS = (D - L)⁻¹ U
+
+3. Successive Over-Relaxation (SOR):
+   Accelerates Gauss-Seidel by interpolating/extrapolating with relaxation factor ω ∈ (1, 2):
+       T_{i,j}^{(k+1)} = (1 - ω) T_{i,j}^{(k)} + (ω / 4) [ T_{i+1,j}^{(k)} + T_{i-1,j}^{(k+1)} + T_{i,j+1}^{(k)} + T_{i,j-1}^{(k+1)} ]
+   Matrix Form:
+       T^{(k+1)} = (D - ω L)⁻¹ [ (1 - ω) D + ω U ] T^{(k)} + ω (D - ω L)⁻¹ b
+
+
+----------------------------------------------------------------------------------------------------
+4.4 YOUNG'S THEOREM & MATRIX SPECTRAL RADIUS PROOF (2X SPEEDUP)
+----------------------------------------------------------------------------------------------------
+Definition: The Spectral Radius ρ(M) of any square iteration matrix M is the maximum absolute eigenvalue:
+    ρ(M) = max_i |λ_i(M)|
+
+Theorem (David M. Young, 1950, Consistently Ordered 2-Cyclic Matrices):
+For any matrix A derived from a standard 5-point finite difference Laplacian stencil on a rectangular
+mesh, matrix A is consistently ordered and 2-cyclic. Consequently:
+    ρ(G_GS) = [ ρ(G_J) ]²
+
+Analytical Eigenvalues of Jacobi Matrix on N x N grid:
+    λ_{p,q} = (1/2) · [ cos(p π / (N + 1)) + cos(q π / (N + 1)) ],   for p, q = 1, 2, ..., N
+    Maximum eigenvalue occurs at lowest frequency mode p = 1, q = 1:
+    h = 1 / (N + 1)
+    ρ(G_J) = cos(π h)
+
+By Young's Theorem:
+    ρ(G_GS) = [ cos(π h) ]²
+
+Optimal SOR Relaxation Parameter ω_opt:
+    ω_opt = 2 / [ 1 + √(1 - ρ(G_J)²) ] = 2 / [ 1 + sin(π h) ]
+    ρ(G_SOR) = ω_opt - 1
+
+Asymptotic Rate of Convergence R_∞:
+    R_∞ = - ln[ ρ(G) ]
+    R_∞(GS) = - ln[ ρ(G_GS) ] = - ln[ (ρ(G_J))² ] = - 2 · ln[ ρ(G_J) ] = 2 · R_∞(J)
+
+CONCLUSION (THE 2X SPEEDUP PROOF):
+The asymptotic convergence rate of Gauss-Seidel is EXACTLY TWICE that of Jacobi. Therefore, to achieve
+the same residual tolerance ε = 10⁻³, Gauss-Seidel requires approximately 50% fewer sweeps than Jacobi!
+
+
+----------------------------------------------------------------------------------------------------
+4.5 VECTOR CALCULUS: GRADIENT OPERATOR (∇T) AND FOURIER'S LAW
+----------------------------------------------------------------------------------------------------
+Temperature T is a scalar field: T: ℝ² → ℝ.
+Its spatial gradient ∇T is a vector field pointing in the direction of maximum temperature increase:
+    ∇T = [ ∂T/∂x , ∂T/∂y ]ᵀ
+
+Magnitude of Gradient (Steepness):
+    |∇T| = √[ (∂T/∂x)² + (∂T/∂y)² ]    (Units: °C/m or °C/cm)
+
+Fourier's Law of Heat Conduction:
+    q = -k · ∇T = [ q_x , q_y ]ᵀ
+    q_x = -k · (∂T/∂x)
+    q_y = -k · (∂T/∂y)
+    |q| = k · |∇T|                     (Units: W/m²)
+
+Discrete Central Difference Computation:
+At any internal node (i, j):
+    (∂T/∂x)_{i,j} = (T_{i, j+1} - T_{i, j-1}) / (2 · Δx)
+    (∂T/∂y)_{i,j} = (T_{i+1, j} - T_{i-1, j}) / (2 · Δy)
+
+Physical Meaning in ThermalX:
+1. Quiver arrows point antiparallel to ∇T (from the red hot die towards the cooler heatsink boundaries).
+2. The steepest gradient |∇T|_max occurs precisely at the silicon-substrate interface boundary, which
+   represents the primary thermal stress zone where heat pipe contact is most critical.
+
+
+----------------------------------------------------------------------------------------------------
+4.6 NON-LINEAR ROOT FINDING: BISECTION METHOD FOR COOLING OPTIMIZATION
+----------------------------------------------------------------------------------------------------
+Active laptop cooling relies on convective heat transfer:
+    q_conv = h(v) · A · (T_surface - T_ambient)
+
+Where convection heat transfer coefficient h depends non-linearly on airflow velocity v (m/s):
+    h(v) = h_natural + c_forced · v^0.8
+    R_conv(v) = 1 / [ h(v) · A ]
+    R_total(v) = R_silicon + R_conv(v)
+    T_die(v) = T_ambient + Q · R_total(v)
+
+Goal: Find fan velocity v* such that CPU operating temperature equals safe target T_target (70.0°C):
+    f(v) = T_die(v) - T_target = 0
+
+Bolzano's Intermediate Value Theorem:
+If f(v) is continuous on [a, b] and f(a) · f(b) < 0, there exists at least one root v* ∈ (a, b).
+In ThermalX:
+    a = 0.10 m/s (Idle Fan)    → f(a) = +43.2°C > 0  (Overheating!)
+    b = 8.00 m/s (Maximum Fan) → f(b) = -12.4°C < 0  (Excessive Cooling / Noisy)
+    f(a) · f(b) < 0  → Root is guaranteed to exist!
+
+Bisection Iteration:
+    m_k = (a_k + b_k) / 2
+    If f(a_k) · f(m_k) < 0 → b_{k+1} = m_k
+    Else                   → a_{k+1} = m_k
+
+Convergence Rate & Theoretical Bound:
+    Error ε_k = (b - a) / 2^k
+    Required Iterations: N ≥ ⌈ log₂((b - a) / ε) ⌉
+
+
+----------------------------------------------------------------------------------------------------
+4.7 MULTI-RUN PARAMETRIC DRIFT & DIFFERENTIAL HEAT DISTRIBUTION (ΔT)
+----------------------------------------------------------------------------------------------------
+When a user alters operating parameters across runs (e.g. Run 1: 85°C CPU, 50% Fan → Run 2: 96°C CPU,
+90% Turbo Fan), ThermalX calculates the 2D Differential Field:
+    ΔT(x,y) = T_current(x,y) - T_previous(x,y)
+
+- If ΔT > 0: Localized thermal surge (overheating hazard).
+- If ΔT < 0: Active convective cooling benefit.
+
+Dual-Envelope Spatial Temperature Curves:
+Along any lateral column coordinate c:
+    T_min(c) = min_r [ T(r, c) ]  → Blue Curve (Cold chassis floor / ambient cooling vents)
+    T_max(c) = max_r [ T(r, c) ]  → Red Curve  (Continuous thermal envelope: Low → High → Low)
+    Spread Ribbon: ΔT_envelope(c) = T_max(c) - T_min(c)
+
+
+====================================================================================================
+5. TECHNICAL ARCHITECTURE & FILE DIRECTORY STRUCTURE
+====================================================================================================
+
+Directory Location: C:\Users\great\OneDrive\Desktop\ThermalX\
+
+ThermalX/
+│
+├── main.py                     # Master Interactive Python CLI runner
+├── thermal_solver.py           # 2D Finite Difference PDE Engine (Jacobi, GS, SOR)
+├── gradient_quiver_plotter.py  # ∇T Gradient, Fourier Heat Flux & 4-Panel PNG Dashboard
+├── bisection_optimizer.py      # Bisection Method for Non-Linear Fan Velocity Sizing
+├── syllabus_verification.py    # Young's Theorem Proof, Spectral Radii & Matrix Analysis
+├── run_history_analyzer.py     # Multi-Run Parametric Drift & ΔT Heatmap Exporter
+├── requirements.txt            # Python Dependencies: numpy, matplotlib, scipy
+├── run_simulation.bat          # 1-Click Windows execution script
+│
+├── index.html                  # Cybernetic Web Application (Standalone HTML5 Interface)
+├── src/
+│   ├── app.js                  # Master Application Controller, Canvas Engine, Analytics
+│   ├── styles.css              # Cybernetic CSS Design System, Glassmorphism, Neon Tokens
+│   └── components/
+│       └── thermalCanvas.js    # Canvas 2D Heatmap, Vector Quivers, Isotherms, Spline Slice
+│
+├── screenshots/                # Real captured outputs for documentation and PPT
+│   ├── 01_home_screen.png
+│   ├── 02_results_quiver_isotherms.png
+│   ├── 03_1d_slice_profile.png
+│   ├── 04_python_code_modal.png
+│   ├── 05_syllabus_modal.png
+│   ├── 06_predictive_delta_slider.png
+│   ├── 07_run_history_delta_graph.png
+│   ├── 08_differential_delta_heatmap.png
+│   ├── 09_view_graphically_multi.png   # Multi-Run Dual-Envelope Blue/Red Curves
+│   └── 10_view_graphically_single.png  # Single-Run Spatial Gradient ∇T Profile
+│
+├── README.md                   # GitHub Repository Readme
+├── PYTHON_GUIDE.md             # Guide explaining Python modules to evaluators
+├── THERMALX_MANUAL.md          # Viva defense manual and mathematical derivations
+└── THERMALX_MASTER_PROJECT_DOCUMENTATION.txt  # THIS EXHAUSTIVE SPECIFICATION FILE
+
+
+====================================================================================================
+6. PYTHON CODE WALKTHROUGH (FILE-BY-FILE DETAILED LOGIC)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+6.1 thermal_solver.py (Lines: 285)
+----------------------------------------------------------------------------------------------------
+Purpose:
+  Encapsulates the discrete 2D thermal conduction grid and implements the iterative linear PDE solvers.
+
+Key Class: ThermalGrid2D
+  __init__(rows=40, cols=40, ambient=25.0, dx=0.005, dy=0.005, k=150.0):
+    - Initializes a 40x40 float64 NumPy array with ambient temperature (25°C).
+    - Sets grid cell dimensions dx = dy = 5mm (0.005m), yielding a 200mm x 200mm laptop motherboard.
+    - Sets thermal conductivity k = 150 W/m·K (composite copper plane / FR4 substrate).
+
+  _setup_hardware_topology():
+    - Places the CPU die at [rows*0.22 : rows*0.38, cols*0.20 : cols*0.36] with 95°C target and 45W heat flux.
+    - Places the Discrete GPU die at [rows*0.26 : rows*0.44, cols*0.58 : cols*0.76] with 84°C target.
+    - Places the Li-Ion Battery at [rows*0.65 : rows*0.90, cols*0.22 : cols*0.78] with 42°C target.
+    - Defines perimeter cooling vents at bottom corners with 25°C heat sinks.
+
+  solve_jacobi(max_iter=1000, tol=1e-3):
+    - Implements simultaneous displacement.
+    - Uses vectorized NumPy slice notation for maximum speed:
+        T_new[1:-1, 1:-1] = 0.25 * (T[2:, 1:-1] + T[:-2, 1:-1] + T[1:-1, 2:] + T[1:-1, :-2])
+    - Enforces Dirichlet boundary conditions at fixed heat sources after each sweep.
+    - Computes L_infinity residue: max_diff = np.max(np.abs(T_new - T)).
+    - Returns convergence status, iteration count, final error, and elapsed CPU time.
+
+  solve_gauss_seidel(max_iter=1000, tol=1e-3):
+    - Implements successive in-place displacement.
+    - Iterates over interior non-fixed nodes:
+        T[i, j] = 0.25 * (T[i+1, j] + T[i-1, j] + T[i, j+1] + T[i, j-1])
+    - Immediately uses the freshly updated values of T[i-1, j] and T[i, j-1] within the same sweep.
+    - Converges in approximately 50% of Jacobi sweeps.
+
+  solve_sor(omega=1.25, max_iter=1000, tol=1e-3):
+    - Implements Successive Over-Relaxation with acceleration parameter omega.
+
+----------------------------------------------------------------------------------------------------
+6.2 gradient_quiver_plotter.py (Lines: 178)
+----------------------------------------------------------------------------------------------------
+Purpose:
+  Performs numerical differentiation on the converged temperature field, calculates the Fourier heat
+  flux vector field, and exports a 4-panel visual engineering dashboard (`thermal_telemetry_dashboard.png`).
+
+Key Functions:
+  compute_thermal_gradients_and_flux(grid, dx=0.005, dy=0.005, k=150.0):
+    - Calls np.gradient(grid, dy, dx) which executes 2nd-order central differences:
+        grad_x = (T_{i, j+1} - T_{i, j-1}) / (2·dx)
+        grad_y = (T_{i+1, j} - T_{i-1, j}) / (2·dy)
+    - Applies Fourier's Law:
+        flux_x = -k * grad_x
+        flux_y = -k * grad_y
+        flux_mag = np.hypot(flux_x, flux_y)
+
+  plot_thermal_telemetry_dashboard(sim_grid_obj, save_path):
+    - Panel 1: Temperature Heatmap with colored bounding boxes denoting CPU, GPU, Battery.
+    - Panel 2: Quiver Vector Field using ax.quiver(X, Y, flux_x, flux_y) with overlaid isothermal
+      contour lines (ax.contour) illustrating thermal flow paths.
+    - Panel 3: 1D Spatial Slice T(x) through the CPU hotspot showing continuous thermal transition.
+    - Panel 4: Semi-log convergence plot comparing log10(Residue) across sweeps for Jacobi vs Gauss-Seidel.
+
+----------------------------------------------------------------------------------------------------
+6.3 bisection_optimizer.py (Lines: 109)
+----------------------------------------------------------------------------------------------------
+Purpose:
+  Solves the non-linear thermal equilibrium equation to determine the optimal fan airflow velocity v*
+  using Bolzano's Bisection algorithm.
+
+Key Functions:
+  thermal_objective_function(v, Q=45.0, T_amb=25.0, T_target=70.0):
+    - Models natural + forced convection: h(v) = 10.0 + 45.0 · (v^0.8).
+    - Computes convective resistance: R_conv = 1 / (h · Area).
+    - Computes junction temperature: T_die = T_amb + Q · (R_silicon + R_conv).
+    - Returns f(v) = T_die - T_target.
+
+  optimize_cooling_bisection(a=0.1, b=8.0, tol=1e-4, max_iter=50):
+    - Verifies Bolzano bracket: f(a) * f(b) < 0.
+    - Repeatedly computes midpoint m = (a + b) / 2.
+    - Prints formatted iteration table showing interval narrowing and residue decay.
+    - Returns exact optimal velocity (typically v* ≈ 2.34 m/s).
+
+----------------------------------------------------------------------------------------------------
+6.4 syllabus_verification.py (Lines: 86)
+----------------------------------------------------------------------------------------------------
+Purpose:
+  Provides analytical and computational proofs of Young's Theorem, spectral radii, and matrix condition
+  numbers to defend during academic viva examinations.
+
+Key Functions:
+  verify_youngs_theorem(N=40):
+    - Computes grid mesh size h = 1 / (N + 1).
+    - Evaluates theoretical spectral radius: rho_jacobi = cos(π·h) ≈ 0.997071.
+    - Evaluates Gauss-Seidel spectral radius: rho_gauss_seidel = [rho_jacobi]² ≈ 0.994151.
+    - Evaluates optimal SOR parameter: omega_opt = 2 / [1 + √(1 - rho_jacobi²)] ≈ 1.8579.
+    - Computes asymptotic convergence rates: R_J = -ln(rho_J), R_GS = -ln(rho_GS) = 2 · R_J.
+    - Computes condition number of discrete Laplacian operator: κ(A) = λ_max / λ_min ≈ 681.3.
+
+----------------------------------------------------------------------------------------------------
+6.5 run_history_analyzer.py (Lines: 153)
+----------------------------------------------------------------------------------------------------
+Purpose:
+  Tracks steady-state temperature evolution across sequential experimental runs and visualizes the
+  2D differential heat field: ΔT(x,y) = T_current - T_previous.
+
+Key Functions:
+  run_parametric_drift_experiment(save_path="delta_t_analysis_dashboard.png"):
+    - Simulates 4 distinct physical scenarios:
+        Run 1: Standard Baseline (CPU: 85°C, GPU: 75°C, Fan: 50%)
+        Run 2: Overclock Load (CPU: 96°C, GPU: 86°C, Fan: 50%)
+        Run 3: Turbo Fan Boost (CPU: 96°C, GPU: 86°C, Fan: 90%)
+        Run 4: Eco Silent Mode (CPU: 72°C, GPU: 62°C, Fan: 35%)
+    - Computes differential arrays: diff_grid = T_curr - T_prev.
+    - Exports a 6-panel dashboard featuring 2D differential heatmaps (coolwarm colormap) and peak
+      temperature drift trajectory lines.
+
+----------------------------------------------------------------------------------------------------
+6.6 main.py (Lines: 206)
+----------------------------------------------------------------------------------------------------
+Purpose:
+  Master entry point providing a cybernetic terminal CLI menu, CLI flags (--all, --bench, --plot, --opt),
+  and launching the web visualizer in the default browser.
+
+
+====================================================================================================
+7. WEB VISUALIZER & GRAPHICAL ANALYTICS DASHBOARD LOGIC
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+7.1 HTML5 HIGH-DPI REAL-TIME PDE CANVAS SOLVER
+----------------------------------------------------------------------------------------------------
+- Implemented in `src/app.js` and `src/components/thermalCanvas.js`.
+- Renders at native device pixel ratio (DPR 2.0+ on Retina displays) with zero blurring.
+- Real-time client-side finite difference solver animates temperature field convergence live at 60 FPS.
+- Interactive toggle overlays:
+  - Vector Quiver field: Arrows rendered dynamically along local temperature gradients.
+  - Isothermal Contours: Marching contour lines linking nodes of identical temperatures.
+  - 1D Cutline Slice: Live horizontal cross-section graph underneath the 2D canvas.
+
+----------------------------------------------------------------------------------------------------
+7.2 MULTI-RUN DUAL-ENVELOPE CURVES (BLUE MIN VS RED MAX CURVES)
+----------------------------------------------------------------------------------------------------
+Located in the dedicated screen: `#thermalx-curves` (Tab 1: Multi-Run Envelopes).
+- **BLUE CURVE (T_min):**
+  Traces the lowest temperature baseline across columns c = 0 ... cols-1:
+      T_min(c) = min_r [ grid[r][c] ]
+  Represents the cold ambient floor and cooling vent efficiency (~25°C - 35°C).
+- **RED CURVE (T_max):**
+  Traces the peak temperature envelope across columns c = 0 ... cols-1:
+      T_max(c) = max_r [ grid[r][c] ]
+  Forms a smooth continuous bell curve:
+  Starts low at the ambient chassis edge (25°C) → climbs to the high peak at the silicon core die
+  (85°C - 96°C) → descends back to low at the opposite edge (Low → High → Low).
+- **MULTI-RUN OVERLAY & SHADED SPREAD RIBBON:**
+  - Multiple runs (Run 1: Baseline, Run 2: Heavy Load, etc.) are plotted simultaneously.
+  - A shaded translucent ribbon fills the region between T_min and T_max, visually representing the
+    total thermal spread ΔT_envelope across the physical dimensions of the chassis.
+  - Interactive checkboxes allow evaluators to toggle individual runs on and off.
+  - Crosshair hover inspector reveals exact node X, T_max, T_min, and delta values.
+
+----------------------------------------------------------------------------------------------------
+7.3 SINGLE-RUN SPATIAL GRADIENT (∇T) PROFILE & DYNAMIC SCRUBBING
+----------------------------------------------------------------------------------------------------
+Located in `#thermalx-curves` (Tab 2: Single-Run Spatial Gradient).
+- Dual-axis graph plotting:
+  1. **Primary Temperature Curve T(x):** Red/Rainbow gradient curve (Left Axis: °C) showing low → high → low.
+  2. **Secondary Spatial Gradient Curve |∇T(x)|:** Luminous Amber curve (Right Axis: °C/cm) showing the
+     derivative steepness |∂T/∂x|.
+- **Interactive Row Slice Slider (Y = 0 ... 23):**
+  Scrubbing the slider across different PCB rows dynamically updates the curve in real time.
+- **Physical Insight:**
+  The gradient curve |∇T| peaks sharply at the boundary interface between the hot die and the cold heatsink,
+  marking the exact zone of maximum thermal shear stress and peak Fourier heat flux (q = -k ∇T).
+
+
+====================================================================================================
+8. READY-TO-USE 10-SLIDE PPT PRESENTATION BLUEPRINT (FOR FRIEND)
+====================================================================================================
+
+Below is the complete slide-by-slide structure that your friend can use directly in Microsoft PowerPoint
+or Google Slides:
+
+----------------------------------------------------------------------------------------------------
+SLIDE 1: TITLE SLIDE
+----------------------------------------------------------------------------------------------------
+- Title: THERMALX — 2D Semiconductor Thermal Conduction & PDE Simulation Suite
+- Subtitle: Finite Difference Numerical Modeling, Iterative Solvers & Gradient Optimization
+- Course: Computational Mathematics & Numerical Analysis
+- Presenter Name(s): [Your Name & Friend's Name]
+- Visual: ThermalX Logo banner + screenshot of the 2D Heatmap & Quiver vectors (`02_results_quiver_isotherms.png`).
+- Speaker Notes:
+  "Good morning respected professors and evaluators. Today we present ThermalX, an engineering
+  application of Computational Mathematics that solves steady-state 2D heat conduction across
+  modern multi-core semiconductor dies using Finite Difference Methods and Iterative Linear Solvers."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 2: PROBLEM STATEMENT & ENGINEERING MOTIVATION
+----------------------------------------------------------------------------------------------------
+- Heading: Why Numerical Thermal Simulation?
+- Bullet Points:
+  • Modern silicon dies dissipate up to 100W over < 1.5 cm² (>60 W/cm² heat flux).
+  • Uneven heat generation causes localized hotspots, thermal throttling, and hardware degradation.
+  • Analytical solutions (Fourier series) cannot handle non-homogeneous multi-component boards.
+  • Solution: Discretize the governing Poisson PDE and solve via high-speed numerical iterative methods.
+- Visual: Diagram of a laptop motherboard with CPU, GPU, and heatsink cooling vents.
+- Speaker Notes:
+  "Analytical calculus fails when dealing with complex geometries with discrete chips and cooling
+  fans. Therefore, numerical PDE discretization is the industry-standard methodology for thermal design."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 3: SYLLABUS MAPPING & THEORETICAL FRAMEWORK
+----------------------------------------------------------------------------------------------------
+- Heading: Direct Course Syllabus Integration
+- Bullet Points:
+  • Unit 1: 2D Elliptic PDEs (Poisson Equation: ∇²T = -q/k)
+  • Unit 2: Finite Difference Discretization (5-Point Laplacian Stencil)
+  • Unit 3: Iterative Linear Algebra (Jacobi, Gauss-Seidel, SOR)
+  • Unit 4: Matrix Spectral Radii & Young's Theorem on 2-Cyclic Matrices
+  • Unit 5: Vector Calculus & Fourier's Law (q = -k ∇T)
+  • Unit 6: Non-Linear Root Finding (Bisection Method for Fan Sizing)
+- Visual: Table showing syllabus topics matched to ThermalX modules.
+- Speaker Notes:
+  "Our project encompasses six fundamental units of the Computational Mathematics curriculum, linking
+  pure mathematical theorems directly to tangible semiconductor hardware simulations."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 4: MATHEMATICAL DISCRETIZATION (5-POINT LAPLACIAN STENCIL)
+----------------------------------------------------------------------------------------------------
+- Heading: Derivation of the Discrete Governing Equation
+- Equations to show:
+  • Continuous 2D Poisson: (∂²T/∂x²) + (∂²T/∂y²) = - q(x,y) / k
+  • Central Difference Approximation:
+    ∂²T/∂x² ≈ (T_{i+1,j} - 2T_{i,j} + T_{i-1,j}) / h²
+    ∂²T/∂y² ≈ (T_{i,j+1} - 2T_{i,j} + T_{i,j-1}) / h²
+  • Resulting 5-Point Stencil:
+    T_{i,j} = (T_{i+1,j} + T_{i-1,j} + T_{i,j+1} + T_{i,j-1}) / 4 + (h² · q_{i,j}) / (4k)
+- Visual: Stencil diagram showing central node (i,j) connected to North, South, East, West neighbors.
+- Speaker Notes:
+  "By expanding Taylor series along orthogonal axes, we derive the second-order 5-point stencil where
+  every interior node temperature is the weighted average of its four immediate neighbors."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 5: ITERATIVE SOLVERS & PROOF OF YOUNG'S THEOREM
+----------------------------------------------------------------------------------------------------
+- Heading: Jacobi vs Gauss-Seidel vs SOR & Convergence Rates
+- Key Points:
+  • Jacobi: Simultaneous updates using previous sweep values.
+  • Gauss-Seidel: Successive in-place updates using newly computed nodes immediately.
+  • Young's Theorem: ρ(G_GS) = [ρ(G_J)]² for consistently ordered 2-cyclic matrices.
+  • Rate of Convergence: R_∞(GS) = -ln(ρ_GS) = -2 ln(ρ_J) = 2 · R_∞(J).
+  • Result: Gauss-Seidel converges exactly 2x faster than Jacobi (requires 50% fewer sweeps).
+- Visual: Convergence curve plot (Log error vs iterations) from `thermal_telemetry_dashboard.png`.
+- Speaker Notes:
+  "We mathematically verified Young's theorem: squaring the spectral radius doubles the asymptotic
+  convergence rate, which explains why Gauss-Seidel cuts computational time in half."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 6: VECTOR CALCULUS & HEAT FLUX QUIVER FIELDS
+----------------------------------------------------------------------------------------------------
+- Heading: Spatial Temperature Gradient (∇T) & Fourier Heat Flux
+- Key Points:
+  • Spatial Gradient Vector: ∇T = (∂T/∂x) i + (∂T/∂y) j
+  • Fourier's Law: q = -k ∇T (Heat flows down the steepest thermal slope).
+  • Quiver vector arrows illustrate active thermal dissipation paths into cooling vents.
+  • Maximum gradient steepness |∇T|_max reveals critical thermal-mechanical stress interfaces.
+- Visual: Screenshot `02_results_quiver_isotherms.png` showing quiver arrows flowing outward from CPU die.
+- Speaker Notes:
+  "Fourier's Law states heat moves from high to low temperature. Our quiver field visually verifies
+  that heat streams away from the CPU hotspot into the ambient heatsink channels."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 7: NON-LINEAR ROOT FINDING (BISECTION METHOD)
+----------------------------------------------------------------------------------------------------
+- Heading: Active Cooling Optimization via Bolzano's Theorem
+- Key Points:
+  • Objective Function: f(v) = T_die(v) - T_target = 0
+  • Convective non-linearity: h(v) = 10 + 45 · v^0.8
+  • Bolzano bracket: f(0.1 m/s) = +43.2°C (Overheating), f(8.0 m/s) = -12.4°C (Overcooled).
+  • Bisection cuts the interval in half every iteration: m_k = (a + b) / 2.
+  • Result: Converges to optimal fan velocity v* = 2.34 m/s within 16 iterations.
+- Visual: Step-by-step Bisection convergence table from `bisection_optimizer.py`.
+- Speaker Notes:
+  "Using the Intermediate Value Theorem, we solve the non-linear fan velocity equation with guaranteed
+  convergence, determining the exact fan speed required to prevent thermal throttling."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 8: DUAL-ENVELOPE CURVES & GRAPHICAL ANALYTICS
+----------------------------------------------------------------------------------------------------
+- Heading: Multi-Run Dual-Envelope Curves (Min vs Max)
+- Key Points:
+  • Blue Curve (T_min): Cold floor baseline across cooling vents (~25°C).
+  • Red Curve (T_max): Continuous thermal envelope rising Low → High peak → Low across the die.
+  • Shaded Thermal Ribbon: Visualizes total spread ΔT_envelope = T_max - T_min.
+  • Multi-Run Stacking: Evaluates how thermal envelopes shift across consecutive user configurations.
+- Visual: Screenshot `09_view_graphically_multi.png`.
+- Speaker Notes:
+  "Our dedicated graphical analytics screen plots both the cold baseline and the peak hot curve across
+  the chip, allowing engineers to compare multiple runs and inspect thermal envelopes."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 9: PYTHON ARCHITECTURE & WEB VISUALIZER
+----------------------------------------------------------------------------------------------------
+- Heading: Full-Stack Implementation: Python Engine + Interactive Web UI
+- Key Points:
+  • Python Architecture: 6 modular scripts covering PDE solving, plotting, root-finding, and verification.
+  • Standalone Web Platform: High-DPI HTML5 Canvas, client-side Gauss-Seidel solver, live telemetry.
+  • Differential Heatmap Mode: Visualizes localized heat deltas ΔT = T_current - T_previous.
+  • GitHub Pages Deployment: Accessible anywhere without local installations.
+- Visual: Screenshot `01_home_screen.png` or `10_view_graphically_single.png`.
+- Speaker Notes:
+  "ThermalX is fully dual-stack: pure Python scripts for terminal research and benchmarking, combined
+  with a zero-dependency web interface deployed on GitHub Pages for live demonstrations."
+
+----------------------------------------------------------------------------------------------------
+SLIDE 10: CONCLUSION & FUTURE EXTENSIONS
+----------------------------------------------------------------------------------------------------
+- Heading: Summary & Future Scope
+- Key Points:
+  • Successfully modeled 2D heat conduction using 5-point Laplacian finite difference stencils.
+  • Validated Jacobi, Gauss-Seidel, and SOR solvers against theoretical Young's spectral radius proofs.
+  • Applied Vector Calculus and Bisection root-finding to real-world semiconductor cooling design.
+  • Future Scope: 3D multi-layer chip stacking, Transient time-dependent heat diffusion (Parabolic PDE
+    via Crank-Nicolson method), and GPU-accelerated CUDA solvers.
+- Speaker Notes:
+  "In conclusion, ThermalX proves that fundamental computational mathematics principles are directly
+  applicable to modern semiconductor challenges. Thank you, and we welcome your questions."
+
+
+====================================================================================================
+9. VIVA VOCE DEFENSE HANDBOOK (TOP 15 QUESTIONS & EXACT ACADEMIC ANSWERS)
+====================================================================================================
+
+Q1: What is the physical governing equation solved in ThermalX?
+A1: "ThermalX solves the 2D Steady-State Heat Conduction Equation, which is an Elliptic Partial
+    Differential Equation: the Poisson Equation ∇²T = -q(x,y)/k in regions with heat generation
+    (CPU/GPU dies), and the Laplace Equation ∇²T = 0 in passive regions."
+
+Q2: How did you discretize the continuous PDE?
+A2: "We used the Finite Difference Method (FDM). By applying Taylor series expansions along the x and y
+    axes and dropping fourth-order error terms O(h⁴), we derived the 2nd-order accurate 5-point
+    Laplacian stencil: T_{i,j} = (T_{i+1,j} + T_{i-1,j} + T_{i,j+1} + T_{i,j-1})/4 + h²q/(4k)."
+
+Q3: What boundary conditions are applied on the domain?
+A3: "We enforce Dirichlet boundary conditions along the external perimeter where the laptop chassis
+    contacts room ambient air (T_ambient = 25°C), as well as fixed temperature boundary zones at the
+    active cooling vents."
+
+Q4: Why does Gauss-Seidel converge faster than Jacobi?
+A4: "In Jacobi iteration, updates use strictly previous iteration values (simultaneous displacement).
+    In Gauss-Seidel, newly updated values are used immediately within the same sweep (successive
+    displacement). By Young's Theorem on 2-cyclic consistently ordered matrices, ρ(G_GS) = [ρ(G_J)]².
+    Since spectral radius ρ < 1, squaring it halves the error multiplication per sweep, making
+    Gauss-Seidel converge exactly twice as fast as Jacobi."
+
+Q5: What is the spectral radius, and why must it be less than 1?
+A5: "The spectral radius ρ(M) is the maximum absolute eigenvalue of the iteration matrix M. In linear
+    iteration x^{(k+1)} = M x^{(k)} + c, the error decays according to e^{(k)} = M^k e^{(0)}. By the
+    Spectral Radius Theorem, lim_{k→∞} M^k = 0 if and only if ρ(M) < 1. If ρ ≥ 1, the numerical method
+    diverges."
+
+Q6: What is SOR, and how do you choose the optimal relaxation factor ω?
+A6: "SOR (Successive Over-Relaxation) accelerates Gauss-Seidel by weighting the updated estimate with
+    parameter ω ∈ (1, 2). The theoretical optimal relaxation parameter for a uniform N x N grid is given
+    by Young's formula: ω_opt = 2 / [1 + √(1 - ρ(G_J)²)] = 2 / [1 + sin(π/(N+1))]."
+
+Q7: What does the Quiver plot represent?
+A7: "The quiver plot illustrates Fourier's Law of Heat Conduction: q = -k ∇T. Each arrow indicates the
+    direction of the heat flux vector pointing down the thermal gradient, showing the path thermal
+    energy travels from hot silicon dies towards external heat sinks."
+
+Q8: How did you compute the spatial gradient ∇T in code?
+A8: "We implemented 2nd-order Central Difference approximations:
+    ∂T/∂x ≈ (T_{i, j+1} - T_{i, j-1}) / (2·Δx)
+    ∂T/∂y ≈ (T_{i+1, j} - T_{i-1, j}) / (2·Δy)
+    This is executed using NumPy's np.gradient() in gradient_quiver_plotter.py."
+
+Q9: What role does the Bisection method play in this engineering project?
+A9: "Active convective heat transfer is non-linear with respect to air velocity (h ∝ v^0.8). Finding the
+    required airflow velocity v* to keep CPU die temperature below safe junction limits (70°C) requires
+    solving f(v) = T_die(v) - 70 = 0. The Bisection method finds this root robustly based on Bolzano's
+    Intermediate Value Theorem."
+
+Q10: What is the stopping criterion for your iterative solvers?
+A10: "We monitor the L_infinity norm of the residual error:
+     ||T^{(k+1)} - T^{(k)}||_∞ = max_{i,j} |T_{i,j}^{(k+1)} - T_{i,j}^{(k)}|
+     Iteration stops when this maximum difference drops below our specified tolerance ε = 10⁻³ °C, or
+     when maximum iterations (1000) are reached."
+
+Q11: What do the Blue and Red curves represent on the graphical analytics screen?
+A11: "The Blue Curve represents the minimum temperature baseline T_min across the chassis (ambient floor
+     and cooling vents). The Red Curve represents the peak temperature envelope T_max, which rises from
+     ambient low at the edge to a high peak over the silicon core, and drops back down to low (Low → High → Low)."
+
+Q12: What does the Differential Heatmap (ΔT) show?
+A12: "The differential heatmap calculates ΔT(x,y) = T_current(x,y) - T_previous(x,y). It directly visualizes
+     the spatial impact of parameter changes (such as increasing fan speed or overclocking the CPU),
+     showing localized cooling benefits in blue and heat surges in red."
+
+Q13: Why did you discretize into 40x40 nodes instead of a higher resolution like 1000x1000?
+A13: "Discretization represents a trade-off between spatial resolution and computational complexity. A
+     40x40 grid has 1,600 unknown variables, which solves in milliseconds while maintaining <0.1°C
+     discretization error. A 1000x1000 grid has 1,000,000 unknowns, requiring O(N³) operations without
+     providing additional pedagogical insight."
+
+Q14: How is numerical stability guaranteed in your solver?
+A14: "The 5-point discrete Laplacian matrix is strictly diagonally dominant: |a_{ii}| = 4, while the sum
+     of off-diagonal elements is |a_{i,i+1}| + |a_{i,i-1}| + |a_{i+1,i}| + |a_{i-1,i}| = 4 (or < 4 at
+     boundary nodes). By the Levy-Desplanques Theorem, strictly diagonally dominant matrices are
+     non-singular, guaranteeing unconditional convergence for Jacobi and Gauss-Seidel."
+
+Q15: Can this system be extended to transient (time-dependent) cooling?
+A15: "Yes. For time-dependent diffusion (∂T/∂t = α ∇²T), the governing PDE becomes Parabolic. We can
+     apply the Crank-Nicolson method (an implicit finite difference scheme based on the trapezoidal rule),
+     which is unconditionally stable and second-order accurate in both space and time O(Δt² + h²)."
+
+
+====================================================================================================
+10. EXECUTION INSTRUCTIONS (LOCAL & CLOUD)
+====================================================================================================
+
+Option A: Run Python CLI on Desktop
+1. Open PowerShell or Command Prompt.
+2. Navigate to: C:\Users\great\OneDrive\Desktop\ThermalX
+3. Run:
+     python main.py
+   Or run the complete verification suite:
+     python main.py --all
+
+Option B: 1-Click Batch Execution
+- Simply double-click `run_simulation.bat` inside the ThermalX folder.
+
+Option C: Run Local Web Interface
+- Run:
+     python -m http.server 8080
+- Open browser at: http://localhost:8080/index.html
+
+Option D: Open Live Cloud Web App
+- Open directly in any mobile or desktop browser:
+     https://greatrocktiger-byte.github.io/ThermalX/
+
+====================================================================================================
+                              END OF MASTER PROJECT DOCUMENTATION
+====================================================================================================
