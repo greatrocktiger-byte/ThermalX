@@ -1,0 +1,2264 @@
+/**
+ * NUMERIX LAB - Master Application Controller
+ * Unifies THERMALX, LINKRANK, and ACADEMIC LAB into one seamless cybernetic platform.
+ */
+
+import { ThermalGrid } from './numerical/thermalSolver.js';
+import { LinkRankNetwork } from './numerical/linkrankSolver.js';
+import { AcademicLab } from './numerical/academicLab.js';
+import { ThermalCanvas } from './components/thermalCanvas.js';
+import { NetworkGraph } from './components/networkGraph.js';
+
+// Sound Synthesizer via Web Audio API (zero external assets required)
+class AudioSynth {
+  constructor() {
+    this.ctx = null;
+    this.muted = false;
+  }
+  init() {
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) this.ctx = new AudioCtx();
+    }
+  }
+  click() {
+    if (this.muted || !this.ctx) return;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(300, this.ctx.currentTime + 0.04);
+      gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.04);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.04);
+    } catch (e) {}
+  }
+  chime() {
+    if (this.muted || !this.ctx) return;
+    try {
+      const notes = [523.25, 659.25, 783.99, 1046.50]; // C Major arpeggio
+      notes.forEach((freq, i) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime + i * 0.06);
+        gain.gain.setValueAtTime(0.06, this.ctx.currentTime + i * 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + i * 0.06 + 0.3);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(this.ctx.currentTime + i * 0.06);
+        osc.stop(this.ctx.currentTime + i * 0.06 + 0.3);
+      });
+    } catch (e) {}
+  }
+}
+
+export class NumerixApp {
+  constructor() {
+    this.synth = new AudioSynth();
+    this.currentModule = 'thermalx';
+    this.currentScreen = 'thermalx-home';
+
+    // Thermal State
+    this.thermalConfig = {
+      ambient: 25.0,
+      cpu: 85.0,
+      gpu: 75.0,
+      battery: 40.0,
+      cooling: 0.60,
+      resolution: 'medium', // 'low' (16x12), 'medium' (24x18), 'high' (32x24)
+      solver: 'gauss-seidel',
+      maxIter: 50,
+      tolerance: 0.001
+    };
+    this.thermalGrid = null;
+    this.thermalResult = null;
+    this.thermalCanvasMain = null;
+    this.thermalCanvasSolver = null;
+    this.customGridCanvas = null;
+    this.customTool = 'heat';
+    this.customToolTemp = 90;
+    this.customSelectedCell = null;
+
+    // LinkRank State
+    this.currentCategory = 'technology';
+    this.network = LinkRankNetwork.createPreset('technology');
+    this.networkGraphEditor = null;
+    this.networkGraphResults = null;
+    this.linkrankResult = null;
+
+    // Navigation History Stack
+    this.navHistory = [];
+
+    this.init();
+  }
+
+  init() {
+    // Audio unlock on first user gesture
+    window.addEventListener('click', () => this.synth.init(), { once: true });
+
+    // Browser Back / Forward Button Handling
+    window.addEventListener('popstate', (e) => {
+      if (e.state && e.state.screen) {
+        this.navigate(e.state.screen, false);
+      }
+    });
+
+    this.setupNavigation();
+    this.setupThermalControls();
+    this.setupCustomGrid();
+    this.setupLinkRankControls();
+    this.setupAcademicLab();
+    this.setupModals();
+
+    // Default view
+    this.navigate('thermalx-home', false);
+  }
+
+  // --- NAVIGATION CONTROLLER ---
+  navigate(screenId, recordHistory = true) {
+    this.synth.click();
+    const isFromTransient = this.currentScreen === 'thermalx-solver' || this.currentScreen === 'linkrank-solver';
+    if (recordHistory && !isFromTransient && this.currentScreen && this.currentScreen !== screenId) {
+      this.navHistory.push(this.currentScreen);
+      try {
+        history.pushState({ screen: screenId }, '', '#' + screenId);
+      } catch (e) {}
+    }
+    this.currentScreen = screenId;
+
+    // Update screen visibility
+    document.querySelectorAll('.tab-screen').forEach(el => el.classList.remove('active'));
+    const target = document.getElementById(screenId);
+    if (target) target.classList.add('active');
+
+    // Update breadcrumbs and global back button
+    this.updateBreadcrumbs(screenId);
+
+    // Update top header module active pill
+    if (screenId.startsWith('thermalx')) {
+      this.setActiveNavModule('thermalx');
+    } else if (screenId.startsWith('linkrank')) {
+      this.setActiveNavModule('linkrank');
+    } else if (screenId.startsWith('academic')) {
+      this.setActiveNavModule('academic');
+    }
+
+    // Lifecycle triggers for specific screens
+    if (screenId === 'thermalx-config') {
+      this.syncThermalConfigUI();
+    } else if (screenId === 'thermalx-custom') {
+      this.initCustomGridEnvironment();
+    } else if (screenId === 'linkrank-editor') {
+      this.initNetworkEditor();
+    } else if (screenId === 'academic-hub') {
+      this.runDefaultAcademicExamples();
+    }
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  goBack() {
+    this.synth.click();
+    while (this.navHistory.length > 0) {
+      const prev = this.navHistory.pop();
+      if (prev !== 'thermalx-solver' && prev !== 'linkrank-solver' && prev !== this.currentScreen) {
+        this.navigate(prev, false);
+        return;
+      }
+    }
+    if (this.currentScreen.startsWith('thermalx') && this.currentScreen !== 'thermalx-home') {
+      this.navigate('thermalx-home', false);
+    } else if (this.currentScreen.startsWith('linkrank') && this.currentScreen !== 'linkrank-home') {
+      this.navigate('linkrank-home', false);
+    } else {
+      this.navigate('thermalx-home', false);
+    }
+  }
+
+  updateBreadcrumbs(screenId) {
+    const backBtn = document.getElementById('globalBackBtn');
+    const crumbsContainer = document.getElementById('globalBreadcrumbs');
+    if (!crumbsContainer) return;
+
+    const isHome = screenId === 'thermalx-home' || screenId === 'linkrank-home' || screenId === 'academic-hub';
+    if (backBtn) {
+      backBtn.style.opacity = isHome ? '0.35' : '1.0';
+      backBtn.style.pointerEvents = isHome ? 'none' : 'auto';
+    }
+
+    const trail = [];
+    trail.push({ label: 'Home', screen: 'thermalx-home', icon: 'home' });
+
+    if (screenId.startsWith('thermalx')) {
+      trail.push({ label: 'THERMALX', screen: 'thermalx-home' });
+      if (screenId === 'thermalx-select') trail.push({ label: 'Choose Mode', screen: 'thermalx-select' });
+      if (screenId === 'thermalx-config') trail.push({ label: 'Laptop Simulation', screen: 'thermalx-config' });
+      if (screenId === 'thermalx-solver') trail.push({ label: 'Solving Temperature Field', screen: 'thermalx-solver' });
+      if (screenId === 'thermalx-results') trail.push({ label: 'Simulation Results', screen: 'thermalx-results' });
+      if (screenId === 'thermalx-custom') trail.push({ label: 'Custom Grid Designer', screen: 'thermalx-custom' });
+      if (screenId === 'thermalx-challenge') trail.push({ label: 'Thermal Challenge', screen: 'thermalx-challenge' });
+    } else if (screenId.startsWith('linkrank')) {
+      trail.push({ label: 'LINKRANK', screen: 'linkrank-home' });
+      if (screenId === 'linkrank-select') trail.push({ label: 'Select Network', screen: 'linkrank-select' });
+      if (screenId === 'linkrank-editor') trail.push({ label: 'Network Editor', screen: 'linkrank-editor' });
+      if (screenId === 'linkrank-solver') trail.push({ label: 'Computing Centrality', screen: 'linkrank-solver' });
+      if (screenId === 'linkrank-results') trail.push({ label: 'Network Ranking Results', screen: 'linkrank-results' });
+    } else if (screenId.startsWith('academic')) {
+      trail.push({ label: 'Numerical Lab', screen: 'academic-hub' });
+    }
+
+    crumbsContainer.innerHTML = trail.map((c, idx) => {
+      const isLast = idx === trail.length - 1;
+      return `
+        <span class="inline-flex items-center gap-1.5 ${isLast ? 'text-primary font-bold' : 'text-on-surface-variant hover:text-white cursor-pointer transition-colors'}" 
+          ${!isLast ? `onclick="app.navigate('${c.screen}')"` : ''}>
+          ${c.icon ? `<span class="material-symbols-outlined text-[15px]">${c.icon}</span>` : ''}
+          <span>${c.label}</span>
+        </span>
+        ${!isLast ? '<span class="text-white/20 select-none">/</span>' : ''}
+      `;
+    }).join('');
+  }
+
+  setActiveNavModule(mod) {
+    this.currentModule = mod;
+    document.querySelectorAll('.nav-module-btn').forEach(btn => {
+      const match = btn.dataset.module === mod;
+      btn.classList.toggle('text-primary', match);
+      btn.classList.toggle('border-primary', match);
+      btn.classList.toggle('text-on-surface-variant', !match);
+    });
+  }
+
+  setupNavigation() {
+    // Top Nav buttons
+    document.querySelectorAll('.nav-module-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mod = btn.dataset.module;
+        if (mod === 'thermalx') this.navigate('thermalx-home');
+        else if (mod === 'linkrank') this.navigate('linkrank-home');
+        else if (mod === 'academic') this.navigate('academic-hub');
+      });
+    });
+
+    // Sound toggle
+    const soundBtn = document.getElementById('soundToggleBtn');
+    if (soundBtn) {
+      soundBtn.addEventListener('click', () => {
+        this.synth.muted = !this.synth.muted;
+        soundBtn.innerHTML = this.synth.muted 
+          ? '<span class="material-symbols-outlined text-[20px]">volume_off</span>'
+          : '<span class="material-symbols-outlined text-[20px]">volume_up</span>';
+      });
+    }
+  }
+
+  // ==========================================
+  // --- THERMALX CONTROLS & SOLVER LOGIC ---
+  // ==========================================
+  setupThermalControls() {
+    // Sliders
+    const sliders = [
+      { id: 'ambientSlider', key: 'ambient', valId: 'ambientVal', unit: '°C' },
+      { id: 'cpuSlider', key: 'cpu', valId: 'cpuVal', unit: '°C' },
+      { id: 'gpuSlider', key: 'gpu', valId: 'gpuVal', unit: '°C' },
+      { id: 'batterySlider', key: 'battery', valId: 'batteryVal', unit: '°C' },
+      { id: 'coolingSlider', key: 'cooling', valId: 'coolingVal', unit: '%', mult: 100 }
+    ];
+
+    sliders.forEach(s => {
+      const el = document.getElementById(s.id);
+      const valEl = document.getElementById(s.valId);
+      if (el) {
+        el.addEventListener('input', () => {
+          let val = parseFloat(el.value);
+          if (s.mult) {
+            this.thermalConfig[s.key] = val / s.mult;
+            if (valEl) valEl.textContent = `${Math.round(val)}${s.unit}`;
+          } else {
+            this.thermalConfig[s.key] = val;
+            if (valEl) valEl.textContent = `${val}${s.unit}`;
+          }
+        });
+      }
+    });
+
+    // Resolution Buttons
+    document.querySelectorAll('.res-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.res-btn').forEach(b => b.classList.remove('bg-primary-container', 'text-on-primary-container'));
+        btn.classList.add('bg-primary-container', 'text-on-primary-container');
+        this.thermalConfig.resolution = btn.dataset.res;
+      });
+    });
+
+    // Solver Method Toggle (Gauss-Seidel vs Jacobi)
+    const methodSelect = document.getElementById('thermalMethodSelect');
+    if (methodSelect) {
+      methodSelect.addEventListener('change', (e) => {
+        this.thermalConfig.solver = e.target.value;
+      });
+    }
+
+    // Start Simulation Button
+    const runBtn = document.getElementById('runThermalSimulationBtn');
+    if (runBtn) {
+      runBtn.addEventListener('click', () => this.runThermalSimulation());
+    }
+  }
+
+  syncThermalConfigUI() {
+    document.getElementById('ambientSlider').value = this.thermalConfig.ambient;
+    document.getElementById('ambientVal').textContent = `${this.thermalConfig.ambient}°C`;
+    document.getElementById('cpuSlider').value = this.thermalConfig.cpu;
+    document.getElementById('cpuVal').textContent = `${this.thermalConfig.cpu}°C`;
+    document.getElementById('gpuSlider').value = this.thermalConfig.gpu;
+    document.getElementById('gpuVal').textContent = `${this.thermalConfig.gpu}°C`;
+    document.getElementById('batterySlider').value = this.thermalConfig.battery;
+    document.getElementById('batteryVal').textContent = `${this.thermalConfig.battery}°C`;
+    document.getElementById('coolingSlider').value = Math.round(this.thermalConfig.cooling * 100);
+    document.getElementById('coolingVal').textContent = `${Math.round(this.thermalConfig.cooling * 100)}%`;
+  }
+
+  getGridDimensions(res) {
+    switch (res) {
+      case 'low': return { rows: 16, cols: 22 };
+      case 'high': return { rows: 32, cols: 42 };
+      default: return { rows: 24, cols: 32 }; // medium
+    }
+  }
+
+  runThermalSimulation() {
+    this.navigate('thermalx-solver');
+
+    const { rows, cols } = this.getGridDimensions(this.thermalConfig.resolution);
+    this.thermalGrid = new ThermalGrid(rows, cols, this.thermalConfig.ambient);
+    this.thermalGrid.setupLaptopTopology(
+      this.thermalConfig.cpu,
+      this.thermalConfig.gpu,
+      this.thermalConfig.battery,
+      this.thermalConfig.cooling
+    );
+
+    // Setup live solver canvas
+    const canvas = document.getElementById('thermalLiveCanvas');
+    if (!this.thermalCanvasSolver && canvas) {
+      this.thermalCanvasSolver = new ThermalCanvas(canvas, { mode: 'laptop', showGrid: true });
+    }
+
+    // Checklist elements
+    const stepInit = document.getElementById('stepInit');
+    const stepBoundary = document.getElementById('stepBoundary');
+    const stepSources = document.getElementById('stepSources');
+    const stepSolve = document.getElementById('stepSolve');
+
+    stepInit.classList.add('text-primary');
+    stepBoundary.classList.add('text-primary');
+    stepSources.classList.add('text-primary');
+    stepSolve.classList.add('text-primary');
+
+    // Solver metadata
+    document.getElementById('solverMethodBadge').textContent = 
+      this.thermalConfig.solver === 'jacobi' ? 'Jacobi Iteration' : 'Gauss-Seidel Method';
+
+    let currentGrid = this.thermalGrid.cloneGrid(this.thermalGrid.grid);
+    let iter = 0;
+    const maxIter = this.thermalConfig.maxIter;
+    const tol = this.thermalConfig.tolerance;
+    const history = [];
+
+    const circleProgress = document.getElementById('solverCircleProgress');
+    const percentText = document.getElementById('solverPercentText');
+    const iterText = document.getElementById('solverIterText');
+    const errorText = document.getElementById('solverErrorText');
+
+    // Step-by-step solver loop with visual pacing
+    const stepIterate = () => {
+      iter++;
+      let result;
+      if (this.thermalConfig.solver === 'jacobi') {
+        result = this.thermalGrid.iterateJacobi(currentGrid);
+        currentGrid = result.nextGrid;
+      } else {
+        result = this.thermalGrid.iterateGaussSeidel(currentGrid);
+        currentGrid = result.nextGrid;
+      }
+
+      const err = result.maxError;
+      const stats = this.thermalGrid.calculateStatistics(currentGrid);
+      history.push({ iteration: iter, error: err, ...stats });
+
+      // Update UI Telemetry
+      const pct = Math.min(100, Math.round((iter / maxIter) * 100));
+      if (percentText) percentText.textContent = `${pct}%`;
+      if (iterText) iterText.textContent = `Iteration ${iter} / ${maxIter}`;
+      if (errorText) errorText.textContent = `Error: ${err.toFixed(5)}`;
+
+      if (circleProgress) {
+        const circumference = 2 * Math.PI * 40;
+        circleProgress.style.strokeDashoffset = circumference - (pct / 100) * circumference;
+      }
+
+      // Update live canvas
+      if (this.thermalCanvasSolver) {
+        this.thermalCanvasSolver.updateGrid(currentGrid, this.thermalGrid.sources, this.thermalGrid.coolers);
+      }
+
+      if (err <= tol || iter >= maxIter) {
+        // Complete!
+        this.thermalGrid.grid = currentGrid;
+        this.thermalResult = {
+          converged: err <= tol,
+          iterations: iter,
+          finalError: err,
+          history,
+          stats
+        };
+        this.synth.chime();
+        setTimeout(() => this.showThermalResults(), 600);
+      } else {
+        requestAnimationFrame(stepIterate);
+      }
+    };
+
+    requestAnimationFrame(stepIterate);
+  }
+
+  showThermalResults() {
+    this.navigate('thermalx-results');
+    const { stats, iterations, finalError, converged } = this.thermalResult;
+
+    // Canvas Results
+    const canvas = document.getElementById('thermalResultsCanvas');
+    if (!this.thermalCanvasMain && canvas) {
+      this.thermalCanvasMain = new ThermalCanvas(canvas, {
+        mode: 'laptop',
+        showGrid: true,
+        smoothing: 'high',
+        onProbe: (probe) => {
+          const probeTag = document.getElementById('resultsProbeTag');
+          const pip = document.getElementById('thermalPip');
+          if (probe) {
+            if (probeTag) probeTag.textContent = `CELL [${probe.r}, ${probe.c}] : ${probe.temp.toFixed(1)}°C`;
+            if (pip) {
+              const pct = Math.max(0, Math.min(94, (1 - (probe.temp - 25) / 75) * 94));
+              pip.style.top = `${pct}%`;
+            }
+          } else {
+            if (probeTag) probeTag.textContent = 'READY';
+          }
+        },
+        onCellClick: (probe) => {
+          if (this.thermalCanvasMain && probe) {
+            this.synth.click();
+            this.thermalCanvasMain.sliceR = probe.r;
+            this.thermalCanvasMain.showSlice = true;
+            this.thermalCanvasMain.render();
+            const sliceContainer = document.getElementById('resultsSliceContainer');
+            if (sliceContainer) sliceContainer.classList.remove('hidden');
+            const sliceBtn = document.getElementById('toggleSliceBtn');
+            if (sliceBtn) {
+              sliceBtn.classList.add('border-emerald-400', 'bg-emerald-500/20');
+            }
+            this.renderSliceGraph();
+          }
+        }
+      });
+    }
+
+    // Toggle Smoothing Mode Button
+    const smoothBtn = document.getElementById('toggleSmoothingBtn');
+    if (smoothBtn && !smoothBtn.dataset.bound) {
+      smoothBtn.dataset.bound = 'true';
+      smoothBtn.addEventListener('click', () => {
+        this.synth.click();
+        const isHigh = this.thermalCanvasMain.options.smoothing === 'high';
+        const nextMode = isHigh ? 'raw' : 'high';
+        this.thermalCanvasMain.setSmoothing(nextMode);
+        document.getElementById('smoothingLabel').textContent = nextMode === 'high' ? 'High (FLIR)' : 'Raw Mesh';
+      });
+    }
+
+    // Top Floating Chip Badges
+    const cpuEl = document.getElementById('stageCpuTemp');
+    if (cpuEl) cpuEl.textContent = `${this.thermalConfig.cpu.toFixed(1)}°C`;
+    const gpuEl = document.getElementById('stageGpuTemp');
+    if (gpuEl) gpuEl.textContent = `${(this.thermalConfig.gpu * 0.992).toFixed(1)}°C`;
+    const batEl = document.getElementById('stageBatTemp');
+    if (batEl) batEl.textContent = `${this.thermalConfig.battery.toFixed(1)}°C`;
+
+    if (this.thermalCanvasMain) {
+      this.thermalCanvasMain.updateGrid(this.thermalGrid.grid, this.thermalGrid.sources, this.thermalGrid.coolers);
+    }
+
+    // Telemetry Cards
+    document.getElementById('resMaxTemp').textContent = stats.maxTemp.toFixed(1);
+    document.getElementById('resAvgTemp').textContent = stats.avgTemp.toFixed(1);
+    document.getElementById('resHotspots').textContent = stats.hotspots;
+    document.getElementById('resStatusBadge').textContent = stats.status.toUpperCase();
+    document.getElementById('resIterations').textContent = iterations;
+    document.getElementById('resFinalError').textContent = finalError.toExponential(3);
+
+    // Primary Hotspot chip
+    document.getElementById('resHotspotName').textContent = stats.primaryHotspot.name;
+    document.getElementById('resHotspotTemp').textContent = `${stats.primaryHotspot.temp}°C`;
+
+    // Status colors
+    const badge = document.getElementById('resStatusBadge');
+    if (stats.status === 'Critical') {
+      badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-red-950/80 text-red-400 border border-red-500/50';
+    } else if (stats.status === 'Hot') {
+      badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-amber-950/80 text-amber-400 border border-amber-500/50';
+    } else {
+      badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-500/50';
+    }
+
+    // Render 1D Cross-Section profile for initial view
+    this.renderSliceGraph();
+  }
+
+  // --- INNOVATION GRAPHICAL REPRESENTATION CONTROLLERS ---
+  toggleQuiverField() {
+    this.synth.click();
+    if (this.thermalCanvasMain) {
+      this.thermalCanvasMain.showVectors = !this.thermalCanvasMain.showVectors;
+      this.thermalCanvasMain.render();
+      const btn = document.getElementById('toggleQuiverBtn');
+      if (btn) {
+        btn.classList.toggle('border-primary', this.thermalCanvasMain.showVectors);
+        btn.classList.toggle('bg-primary/25', this.thermalCanvasMain.showVectors);
+      }
+    }
+  }
+
+  toggleIsotherms() {
+    this.synth.click();
+    if (this.thermalCanvasMain) {
+      this.thermalCanvasMain.showContours = !this.thermalCanvasMain.showContours;
+      this.thermalCanvasMain.render();
+      const btn = document.getElementById('toggleIsothermsBtn');
+      if (btn) {
+        btn.classList.toggle('border-amber-400', this.thermalCanvasMain.showContours);
+        btn.classList.toggle('bg-amber-500/25', this.thermalCanvasMain.showContours);
+      }
+    }
+  }
+
+  toggleSliceProfile() {
+    this.synth.click();
+    if (this.thermalCanvasMain) {
+      this.thermalCanvasMain.showSlice = !this.thermalCanvasMain.showSlice;
+      this.thermalCanvasMain.render();
+      const btn = document.getElementById('toggleSliceBtn');
+      const container = document.getElementById('resultsSliceContainer');
+      if (btn) {
+        btn.classList.toggle('border-emerald-400', this.thermalCanvasMain.showSlice);
+        btn.classList.toggle('bg-emerald-500/25', this.thermalCanvasMain.showSlice);
+      }
+      if (container) {
+        container.classList.toggle('hidden', !this.thermalCanvasMain.showSlice);
+      }
+      if (this.thermalCanvasMain.showSlice) {
+        this.renderSliceGraph();
+      }
+    }
+  }
+
+  renderSliceGraph() {
+    const canvas = document.getElementById('resultsSliceCanvas');
+    if (!canvas || !this.thermalGrid || !this.thermalGrid.grid) return;
+
+    const r = (this.thermalCanvasMain && this.thermalCanvasMain.sliceR !== undefined)
+      ? Math.max(0, Math.min(this.thermalGrid.rows - 1, this.thermalCanvasMain.sliceR))
+      : Math.floor(this.thermalGrid.rows / 2);
+
+    const rowTemps = this.thermalGrid.grid[r];
+    if (!rowTemps || rowTemps.length === 0) return;
+
+    const label = document.getElementById('resultsSliceRowLabel');
+    const maxT = Math.max(...rowTemps);
+    const minT = Math.min(...rowTemps);
+    if (label) {
+      label.textContent = `Row ${r} (Peak: ${maxT.toFixed(1)}°C, Min: ${minT.toFixed(1)}°C)`;
+    }
+
+    // High-DPI setup for crisp lines
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width > 0 ? rect.width : 700;
+    const h = rect.height > 0 ? rect.height : 96;
+    canvas.width = w * window.devicePixelRatio || w;
+    canvas.height = h * window.devicePixelRatio || h;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    // Dark sleek background
+    ctx.fillStyle = '#060913';
+    ctx.fillRect(0, 0, w, h);
+
+    const padLeft = 45;
+    const padRight = 20;
+    const padTop = 16;
+    const padBottom = 20;
+    const plotW = w - padLeft - padRight;
+    const plotH = h - padTop - padBottom;
+
+    // Grid guide lines (25°C, 50°C, 75°C, 100°C)
+    const tMin = 20;
+    const tMax = 100;
+    const levels = [25, 50, 75, 100];
+
+    ctx.lineWidth = 1;
+    levels.forEach(lvl => {
+      const y = padTop + plotH - ((lvl - tMin) / (tMax - tMin)) * plotH;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(padLeft, y);
+      ctx.lineTo(w - padRight, y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${lvl}°C`, padLeft - 6, y + 3);
+    });
+
+    // Compute coordinate points
+    const pts = rowTemps.map((temp, i) => {
+      const x = padLeft + (i / (rowTemps.length - 1)) * plotW;
+      const y = padTop + plotH - ((Math.min(tMax, Math.max(tMin, temp)) - tMin) / (tMax - tMin)) * plotH;
+      return { x, y, temp };
+    });
+
+    if (pts.length < 2) return;
+
+    // Gradient fill under the 1D temperature curve
+    const grad = ctx.createLinearGradient(0, padTop, 0, padTop + plotH);
+    grad.addColorStop(0, 'rgba(255, 42, 0, 0.35)');
+    grad.addColorStop(0.5, 'rgba(255, 152, 0, 0.20)');
+    grad.addColorStop(1, 'rgba(0, 240, 255, 0.04)');
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, padTop + plotH);
+    pts.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.lineTo(pts[pts.length - 1].x, padTop + plotH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Plot line
+    ctx.lineWidth = 2.0;
+    ctx.strokeStyle = '#00f0ff';
+    ctx.beginPath();
+    pts.forEach((p, idx) => {
+      if (idx === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+
+    // Data points & peak indicator
+    pts.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = p.temp > 70 ? '#ff3b30' : (p.temp > 45 ? '#ff9500' : '#00f0ff');
+      ctx.fill();
+    });
+
+    // Highlight maximum point
+    const maxPt = pts.reduce((prev, curr) => curr.temp > prev.temp ? curr : prev, pts[0]);
+    if (maxPt) {
+      ctx.beginPath();
+      ctx.arc(maxPt.x, maxPt.y, 5, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff3b30';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#ff3b30';
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${maxPt.temp.toFixed(1)}°C`, maxPt.x, maxPt.y - 7);
+    }
+  }
+
+  // --- CUSTOM GRID SETUP ---
+  setupCustomGrid() {
+    document.querySelectorAll('.grid-tool-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.grid-tool-btn').forEach(b => b.classList.remove('border-primary', 'bg-surface-container-high'));
+        btn.classList.add('border-primary', 'bg-surface-container-high');
+        this.customTool = btn.dataset.tool;
+      });
+    });
+
+    const simulateBtn = document.getElementById('simulateCustomGridBtn');
+    if (simulateBtn) {
+      simulateBtn.addEventListener('click', () => this.runCustomGridSimulation());
+    }
+
+    const clearBtn = document.getElementById('clearCustomGridBtn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        this.thermalGrid = new ThermalGrid(16, 16, 25.0);
+        this.customGridCanvas.updateGrid(this.thermalGrid.grid, [], []);
+        document.getElementById('customPropPanel').classList.add('hidden');
+      });
+    }
+  }
+
+  initCustomGridEnvironment() {
+    if (!this.thermalGrid || this.currentScreen === 'thermalx-custom') {
+      this.thermalGrid = new ThermalGrid(16, 16, 25.0);
+      // Default demo sources
+      this.thermalGrid.sources.push({
+        r: 4, c: 4, width: 3, height: 3, targetTemp: 90.0, heatFlux: 30.0, type: 'custom'
+      });
+      this.thermalGrid.coolers.push({
+        r: 10, c: 11, width: 2, height: 2, efficiency: 1.0
+      });
+    }
+
+    const canvas = document.getElementById('customGridCanvas');
+    if (!this.customGridCanvas && canvas) {
+      this.customGridCanvas = new ThermalCanvas(canvas, {
+        mode: 'custom',
+        showGrid: true,
+        showMotherboard: false,
+        onCellClick: (probe) => this.handleCustomCellClick(probe)
+      });
+    }
+
+    if (this.customGridCanvas) {
+      this.customGridCanvas.updateGrid(this.thermalGrid.grid, this.thermalGrid.sources, this.thermalGrid.coolers);
+    }
+  }
+
+  handleCustomCellClick(cell) {
+    const { r, c } = cell;
+    this.synth.click();
+
+    if (this.customTool === 'heat') {
+      this.thermalGrid.sources.push({
+        r, c, width: 2, height: 2, targetTemp: this.customToolTemp, heatFlux: 25.0, type: 'custom'
+      });
+    } else if (this.customTool === 'cool') {
+      this.thermalGrid.coolers.push({
+        r, c, width: 2, height: 2, efficiency: 1.2
+      });
+    } else if (this.customTool === 'eraser') {
+      this.thermalGrid.sources = this.thermalGrid.sources.filter(s => !(s.r <= r && r < s.r + s.height && s.c <= c && c < s.c + s.width));
+      this.thermalGrid.coolers = this.thermalGrid.coolers.filter(cl => !(cl.r <= r && r < cl.r + cl.height && cl.c <= c && c < cl.c + cl.width));
+    }
+
+    this.customGridCanvas.updateGrid(this.thermalGrid.grid, this.thermalGrid.sources, this.thermalGrid.coolers);
+
+    // Inspector
+    const panel = document.getElementById('customPropPanel');
+    if (panel) {
+      panel.classList.remove('hidden');
+      document.getElementById('propCoord').textContent = `[${r}, ${c}]`;
+      document.getElementById('propTemp').textContent = `${cell.temp.toFixed(1)}°C`;
+    }
+  }
+
+  runCustomGridSimulation() {
+    this.thermalConfig.solver = 'gauss-seidel';
+    this.navigate('thermalx-solver');
+
+    const canvas = document.getElementById('thermalLiveCanvas');
+    if (!this.thermalCanvasSolver && canvas) {
+      this.thermalCanvasSolver = new ThermalCanvas(canvas, { mode: 'custom', showGrid: true });
+    }
+
+    let currentGrid = this.thermalGrid.cloneGrid(this.thermalGrid.grid);
+    let iter = 0;
+    const maxIter = 40;
+    const history = [];
+
+    const stepIter = () => {
+      iter++;
+      const result = this.thermalGrid.iterateGaussSeidel(currentGrid);
+      currentGrid = result.nextGrid;
+      const err = result.maxError;
+      const stats = this.thermalGrid.calculateStatistics(currentGrid);
+      history.push({ iteration: iter, error: err, ...stats });
+
+      const pct = Math.min(100, Math.round((iter / maxIter) * 100));
+      document.getElementById('solverPercentText').textContent = `${pct}%`;
+      document.getElementById('solverIterText').textContent = `Iteration ${iter} / ${maxIter}`;
+      document.getElementById('solverErrorText').textContent = `Error: ${err.toFixed(5)}`;
+
+      if (this.thermalCanvasSolver) {
+        this.thermalCanvasSolver.updateGrid(currentGrid, this.thermalGrid.sources, this.thermalGrid.coolers);
+      }
+
+      if (err <= 0.001 || iter >= maxIter) {
+        this.thermalGrid.grid = currentGrid;
+        this.thermalResult = { converged: true, iterations: iter, finalError: err, history, stats };
+        this.synth.chime();
+        setTimeout(() => this.showThermalResults(), 600);
+      } else {
+        requestAnimationFrame(stepIter);
+      }
+    };
+    requestAnimationFrame(stepIter);
+  }
+
+  // ==========================================
+  // --- LINKRANK CONTROLS & GRAPH LOGIC ---
+  // ==========================================
+  setupLinkRankControls() {
+    // Preset cards
+    document.querySelectorAll('.network-category-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const cat = card.dataset.category;
+        this.currentCategory = cat;
+        this.network = LinkRankNetwork.createPreset(cat);
+        this.navigate('linkrank-editor');
+      });
+    });
+
+    // Calculate Ranking Button
+    const calcBtn = document.getElementById('calculateLinkRankBtn');
+    if (calcBtn) {
+      calcBtn.addEventListener('click', () => this.runLinkRankSolver());
+    }
+
+    // Add Node Form
+    const addNodeBtn = document.getElementById('addNodeBtn');
+    if (addNodeBtn) {
+      addNodeBtn.addEventListener('click', () => {
+        const nameInput = document.getElementById('newNodeName');
+        const catInput = document.getElementById('newNodeCategory');
+        const name = nameInput.value.trim();
+        if (name) {
+          const id = name.toLowerCase().replace(/\s+/g, '_');
+          this.network.addNode(id, name, catInput.value || 'Custom');
+          nameInput.value = '';
+          this.syncNetworkEditorUI();
+        }
+      });
+    }
+
+    // Add Link Form
+    const addLinkBtn = document.getElementById('addLinkBtn');
+    if (addLinkBtn) {
+      addLinkBtn.addEventListener('click', () => {
+        const fromSel = document.getElementById('linkFromSelect');
+        const toSel = document.getElementById('linkToSelect');
+        if (fromSel.value && toSel.value && fromSel.value !== toSel.value) {
+          this.network.addEdge(fromSel.value, toSel.value);
+          this.syncNetworkEditorUI();
+        }
+      });
+    }
+
+    // Reset Network
+    const resetNetBtn = document.getElementById('resetNetworkBtn');
+    if (resetNetBtn) {
+      resetNetBtn.addEventListener('click', () => {
+        this.network = LinkRankNetwork.createPreset(this.currentCategory);
+        this.syncNetworkEditorUI();
+      });
+    }
+  }
+
+  initNetworkEditor() {
+    const canvas = document.getElementById('networkEditorCanvas');
+    if (!this.networkGraphEditor && canvas) {
+      this.networkGraphEditor = new NetworkGraph(canvas, {
+        onNodeClick: (node) => {
+          this.synth.click();
+          this.showNodeDetails(node);
+        }
+      });
+    }
+    this.syncNetworkEditorUI();
+  }
+
+  syncNetworkEditorUI() {
+    // Update Dropdowns
+    const fromSel = document.getElementById('linkFromSelect');
+    const toSel = document.getElementById('linkToSelect');
+    if (fromSel && toSel) {
+      const opts = this.network.nodes.map(n => `<option value="${n.id}">${n.name}</option>`).join('');
+      fromSel.innerHTML = opts;
+      toSel.innerHTML = opts;
+      if (this.network.nodes.length > 1) toSel.selectedIndex = 1;
+    }
+
+    // Update Counts
+    const metaTag = document.getElementById('networkMetaTag');
+    if (metaTag) {
+      metaTag.textContent = `${this.network.nodes.length} Nodes • ${this.network.edges.length} Edges`;
+    }
+
+    if (this.networkGraphEditor) {
+      this.networkGraphEditor.setData(this.network.nodes, this.network.edges);
+    }
+  }
+
+  showNodeDetails(node) {
+    const info = document.getElementById('selectedNodeInspector');
+    if (info) {
+      info.classList.remove('hidden');
+      document.getElementById('inspectNodeName').textContent = node.name;
+      document.getElementById('inspectNodeCategory').textContent = node.category || 'General';
+      const inDeg = this.network.edges.filter(e => e.to === node.id).length;
+      const outDeg = this.network.edges.filter(e => e.from === node.id).length;
+      document.getElementById('inspectNodeInDeg').textContent = inDeg;
+      document.getElementById('inspectNodeOutDeg').textContent = outDeg;
+    }
+  }
+
+  runLinkRankSolver() {
+    this.navigate('linkrank-solver');
+
+    const circleProgress = document.getElementById('linkrankCircleProgress');
+    const percentText = document.getElementById('linkrankPercentText');
+    const iterText = document.getElementById('linkrankIterText');
+    const errorText = document.getElementById('linkrankErrorText');
+
+    let currentIter = 0;
+    const maxIter = 20;
+
+    // Simulate animated power iteration step presentation
+    const runStep = () => {
+      currentIter++;
+      const partialSolve = this.network.solve({ maxIterations: currentIter, tolerance: 1e-6 });
+      const lastHist = partialSolve.history[partialSolve.history.length - 1];
+      const err = lastHist ? lastHist.error : 0.001;
+
+      const pct = Math.min(100, Math.round((currentIter / maxIter) * 100));
+      if (percentText) percentText.textContent = `${pct}%`;
+      if (iterText) iterText.textContent = `Iteration ${currentIter} / ${maxIter}`;
+      if (errorText) errorText.textContent = `Error: ${err.toFixed(6)}`;
+
+      if (circleProgress) {
+        const circumference = 2 * Math.PI * 40;
+        circleProgress.style.strokeDashoffset = circumference - (pct / 100) * circumference;
+      }
+
+      if (currentIter < 12) {
+        setTimeout(runStep, 80);
+      } else {
+        // Final Solve
+        this.linkrankResult = this.network.solve({ maxIterations: 35, tolerance: 1e-6 });
+        this.synth.chime();
+        setTimeout(() => this.showLinkRankResults(), 500);
+      }
+    };
+
+    setTimeout(runStep, 100);
+  }
+
+  showLinkRankResults() {
+    this.navigate('linkrank-results');
+    const res = this.linkrankResult;
+    if (!res) return;
+
+    // Table Leaderboard
+    const tableBody = document.getElementById('rankingsTableBody');
+    if (tableBody) {
+      tableBody.innerHTML = res.rankings.map(r => `
+        <tr class="border-b border-white/5 hover:bg-white/5 transition-colors">
+          <td class="py-3 px-3">
+            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full font-mono text-xs font-bold ${
+              r.rank === 1 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50' :
+              r.rank === 2 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50' :
+              'bg-surface-container-high text-on-surface-variant'
+            }">
+              #${r.rank}
+            </span>
+          </td>
+          <td class="py-3 px-3">
+            <div class="font-heading font-semibold text-sm text-on-surface">${r.name}</div>
+            <div class="text-xs text-on-surface-variant">${r.category}</div>
+          </td>
+          <td class="py-3 px-3 font-mono text-sm text-right text-primary font-bold">
+            ${r.score.toFixed(4)}
+          </td>
+          <td class="py-3 px-3">
+            <div class="w-24 bg-surface-container-high h-2 rounded-full overflow-hidden">
+              <div class="h-full bg-gradient-to-r from-primary to-secondary rounded-full" style="width: ${Math.min(100, r.percentage * 2.5)}%"></div>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // Top Node Highlight Card
+    const top = res.rankings[0];
+    if (top) {
+      document.getElementById('topNodeName').textContent = top.name;
+      document.getElementById('topNodeScore').textContent = `Score: ${top.score.toFixed(4)} (${top.percentage}%)`;
+    }
+
+    // Results Canvas Graph with scaled aura and radii
+    const canvas = document.getElementById('networkResultsCanvas');
+    if (!this.networkGraphResults && canvas) {
+      this.networkGraphResults = new NetworkGraph(canvas);
+    }
+    if (this.networkGraphResults) {
+      this.networkGraphResults.setData(this.network.nodes, this.network.edges, res.rankings);
+    }
+  }
+
+  // ==========================================
+  // --- WHAT-IF LIVE NETWORK COMPARISON ---
+  // ==========================================
+  openWhatIfModal() {
+    this.synth.click();
+    const modal = document.getElementById('whatIfModal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    const top = this.linkrankResult.rankings[0];
+    const challenger = this.linkrankResult.rankings[1] || this.linkrankResult.rankings[0];
+
+    document.getElementById('whatIfChallengerName').textContent = challenger.name;
+    document.getElementById('whatIfLeaderName').textContent = top.name;
+
+    // Action: Redirect an edge from leader to challenger
+    const executeWhatIf = (actionType) => {
+      let modifiedEdges = [...this.network.edges];
+      if (actionType === 'boostChallenger') {
+        // Point all other nodes to challenger
+        for (const n of this.network.nodes) {
+          if (n.id !== challenger.id && !modifiedEdges.some(e => e.from === n.id && e.to === challenger.id)) {
+            modifiedEdges.push({ from: n.id, to: challenger.id });
+          }
+        }
+      } else if (actionType === 'cutLeader') {
+        // Sever incoming edges to leader
+        modifiedEdges = modifiedEdges.filter(e => e.to !== top.id);
+      }
+
+      const diff = this.network.simulateWhatIf(modifiedEdges);
+      this.renderWhatIfComparison(diff);
+    };
+
+    document.getElementById('whatIfBoostBtn').onclick = () => executeWhatIf('boostChallenger');
+    document.getElementById('whatIfSeverBtn').onclick = () => executeWhatIf('cutLeader');
+
+    // Run baseline
+    const initialDiff = this.network.simulateWhatIf(this.network.edges);
+    this.renderWhatIfComparison(initialDiff);
+  }
+
+  renderWhatIfComparison(diff) {
+    const list = document.getElementById('whatIfDeltaList');
+    if (!list) return;
+
+    list.innerHTML = diff.comparison.map(item => `
+      <div class="flex items-center justify-between p-3 rounded-lg bg-surface-container-high/60 border border-white/5">
+        <div class="flex items-center gap-3">
+          <span class="font-mono text-xs px-2 py-0.5 rounded bg-surface-container-lowest text-on-surface">
+            #${item.previousRank} → #${item.rank}
+          </span>
+          <span class="font-heading font-semibold text-sm text-on-surface">${item.name}</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="font-mono text-xs ${item.scoreDelta > 0 ? 'text-emerald-400' : (item.scoreDelta < 0 ? 'text-red-400' : 'text-on-surface-variant')}">
+            ${item.scoreDelta > 0 ? '+' : ''}${item.scoreDelta.toFixed(4)}
+          </span>
+          <span class="text-xs px-2 py-0.5 rounded font-semibold ${
+            item.rankDelta > 0 ? 'bg-emerald-500/20 text-emerald-300' :
+            item.rankDelta < 0 ? 'bg-red-500/20 text-red-300' : 'bg-surface-container text-on-surface-variant'
+          }">
+            ${item.rankDelta > 0 ? `▲ +${item.rankDelta}` : (item.rankDelta < 0 ? `▼ ${item.rankDelta}` : '—')}
+          </span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ==========================================
+  // --- ACADEMIC LAB (VIVA CENTER) ---
+  // ==========================================
+  setupAcademicLab() {
+    this.academicState = {
+      linear: { result: null, step: 0, animating: false, timer: null },
+      bisection: { result: null, step: 0, animating: false, timer: null },
+      newton: { result: null, step: 0, animating: false, timer: null },
+      power: { result: null, step: 0, animating: false, timer: null }
+    };
+
+    // Subtabs switcher
+    document.querySelectorAll('.academic-subtab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.synth.click();
+        document.querySelectorAll('.academic-subtab-btn').forEach(b => {
+          b.classList.remove('bg-primary-container', 'text-on-primary-container');
+          b.classList.add('text-on-surface-variant');
+        });
+        btn.classList.add('bg-primary-container', 'text-on-primary-container');
+        btn.classList.remove('text-on-surface-variant');
+
+        const tab = btn.dataset.tab;
+        document.querySelectorAll('.academic-tab-content').forEach(c => c.classList.add('hidden'));
+        const target = document.getElementById(tab);
+        if (target) {
+          target.classList.remove('hidden');
+          // Redraw active canvas after tab becomes visible
+          if (tab === 'academic-linear') this.redrawLinearCanvas();
+          else if (tab === 'academic-bisection') this.redrawBisectionCanvas();
+          else if (tab === 'academic-newton') this.redrawNewtonCanvas();
+          else if (tab === 'academic-power') this.redrawPowerCanvas();
+        }
+      });
+    });
+
+    // --- Tab 1: Linear System Controls ---
+    const linearPresetSelect = document.getElementById('linearPresetSelect');
+    if (linearPresetSelect) {
+      linearPresetSelect.addEventListener('change', () => {
+        this.synth.click();
+        const pKey = linearPresetSelect.value;
+        const p = AcademicLab.linearPresets[pKey];
+        if (p) {
+          document.getElementById('linearPresetDesc').textContent = p.desc;
+          document.getElementById('linearEquationStrip').textContent = p.equationStr;
+        }
+        this.initLinearSystemDemo();
+      });
+    }
+
+    const linearTolSlider = document.getElementById('linearTolSlider');
+    if (linearTolSlider) {
+      linearTolSlider.addEventListener('input', (e) => {
+        const exp = parseInt(e.target.value);
+        document.getElementById('linearTolVal').textContent = `1e-${exp}`;
+      });
+    }
+
+    document.getElementById('runAcademicLinearBtn')?.addEventListener('click', () => {
+      this.playLinearSystemAnimation();
+    });
+    document.getElementById('stepAcademicLinearBtn')?.addEventListener('click', () => {
+      this.stepLinearSystem();
+    });
+    document.getElementById('resetAcademicLinearBtn')?.addEventListener('click', () => {
+      this.initLinearSystemDemo();
+    });
+
+    // --- Tab 2: Bisection Controls ---
+    const bisFuncSelect = document.getElementById('bisectionFuncSelect');
+    if (bisFuncSelect) {
+      bisFuncSelect.addEventListener('change', () => {
+        this.synth.click();
+        const fKey = bisFuncSelect.value;
+        const p = AcademicLab.bisectionPresets[fKey];
+        if (p) {
+          document.getElementById('bisectionPresetDesc').textContent = p.desc;
+          document.getElementById('bisInputA').value = p.defaultA;
+          document.getElementById('bisInputB').value = p.defaultB;
+        }
+        this.validateBisectionBracket();
+        this.initBisectionDemo();
+      });
+    }
+
+    const validateBis = () => this.validateBisectionBracket();
+    document.getElementById('bisInputA')?.addEventListener('input', validateBis);
+    document.getElementById('bisInputB')?.addEventListener('input', validateBis);
+
+    document.getElementById('runAcademicBisectionBtn')?.addEventListener('click', () => {
+      this.playBisectionAnimation();
+    });
+    document.getElementById('stepAcademicBisectionBtn')?.addEventListener('click', () => {
+      this.stepBisection();
+    });
+    document.getElementById('resetAcademicBisectionBtn')?.addEventListener('click', () => {
+      this.initBisectionDemo();
+    });
+
+    // --- Tab 3: Newton-Raphson Controls ---
+    const newtonFuncSelect = document.getElementById('newtonFuncSelect');
+    if (newtonFuncSelect) {
+      newtonFuncSelect.addEventListener('change', () => {
+        this.synth.click();
+        const fKey = newtonFuncSelect.value;
+        const p = AcademicLab.newtonPresets[fKey];
+        if (p) {
+          document.getElementById('newtonPresetDesc').textContent = p.desc;
+          document.getElementById('newtonInputX0').value = p.defaultX0;
+          document.getElementById('newtonFormulaBox').textContent = p.formula;
+        }
+        this.initNewtonDemo();
+      });
+    }
+
+    document.getElementById('runAcademicNewtonBtn')?.addEventListener('click', () => {
+      this.playNewtonAnimation();
+    });
+    document.getElementById('stepAcademicNewtonBtn')?.addEventListener('click', () => {
+      this.stepNewton();
+    });
+    document.getElementById('resetAcademicNewtonBtn')?.addEventListener('click', () => {
+      this.initNewtonDemo();
+    });
+
+    // --- Tab 4: Power Method Controls ---
+    const powerPresetSelect = document.getElementById('powerPresetSelect');
+    if (powerPresetSelect) {
+      powerPresetSelect.addEventListener('change', () => {
+        this.synth.click();
+        const pKey = powerPresetSelect.value;
+        const p = AcademicLab.powerPresets[pKey];
+        if (p) {
+          document.getElementById('powerPresetDesc').textContent = p.desc;
+          document.getElementById('powerMatrixStrip').textContent = `A = ${p.matrixStr}`;
+        }
+        this.initPowerDemo();
+      });
+    }
+
+    document.getElementById('runAcademicPowerBtn')?.addEventListener('click', () => {
+      this.playPowerAnimation();
+    });
+    document.getElementById('stepAcademicPowerBtn')?.addEventListener('click', () => {
+      this.stepPower();
+    });
+    document.getElementById('resetAcademicPowerBtn')?.addEventListener('click', () => {
+      this.initPowerDemo();
+    });
+
+    // Handle window resize for canvases
+    window.addEventListener('resize', () => {
+      if (this.currentScreen === 'academic-hub') {
+        this.redrawLinearCanvas();
+        this.redrawBisectionCanvas();
+        this.redrawNewtonCanvas();
+        this.redrawPowerCanvas();
+      }
+    });
+  }
+
+  runDefaultAcademicExamples() {
+    this.initLinearSystemDemo();
+    this.initBisectionDemo();
+    this.initNewtonDemo();
+    this.initPowerDemo();
+  }
+
+  // ------------------------------------------
+  // TAB 1: LINEAR SYSTEM (JACOBI VS GAUSS-SEIDEL)
+  // ------------------------------------------
+  initLinearSystemDemo() {
+    const preset = document.getElementById('linearPresetSelect')?.value || 'standard';
+    const exp = parseInt(document.getElementById('linearTolSlider')?.value || 4);
+    const tol = Math.pow(10, -exp);
+
+    const res = AcademicLab.solveLinearSystem({ preset, tol });
+    this.academicState.linear = {
+      result: res,
+      step: res.gaussSeidel.steps.length,
+      animating: false,
+      timer: null
+    };
+
+    this.renderLinearTable(this.academicState.linear.step);
+    this.redrawLinearCanvas();
+  }
+
+  playLinearSystemAnimation() {
+    this.synth.chime();
+    const st = this.academicState.linear;
+    if (st.timer) clearInterval(st.timer);
+
+    st.step = 0;
+    st.animating = true;
+    const maxSteps = Math.max(st.result.jacobi.steps.length, st.result.gaussSeidel.steps.length);
+
+    st.timer = setInterval(() => {
+      if (st.step < maxSteps) {
+        st.step++;
+        this.synth.click();
+        this.renderLinearTable(st.step);
+        this.redrawLinearCanvas();
+      } else {
+        clearInterval(st.timer);
+        st.animating = false;
+        this.synth.chime();
+      }
+    }, 280);
+  }
+
+  stepLinearSystem() {
+    this.synth.click();
+    const st = this.academicState.linear;
+    if (st.timer) clearInterval(st.timer);
+    const maxSteps = Math.max(st.result.jacobi.steps.length, st.result.gaussSeidel.steps.length);
+    if (st.step < maxSteps) {
+      st.step++;
+      this.renderLinearTable(st.step);
+      this.redrawLinearCanvas();
+    }
+  }
+
+  renderLinearTable(currentStep) {
+    const res = this.academicState.linear.result;
+    if (!res) return;
+    const tbody = document.getElementById('academicLinearTable');
+    if (!tbody) return;
+
+    const maxCount = Math.max(res.jacobi.steps.length, res.gaussSeidel.steps.length);
+    const visibleCount = Math.min(currentStep, maxCount);
+
+    tbody.innerHTML = Array.from({ length: visibleCount }).map((_, idx) => {
+      const iter = idx + 1;
+      const j = res.jacobi.steps[idx] || { x: ['converged'], error: '-' };
+      const gs = res.gaussSeidel.steps[idx] || { x: ['converged'], error: '-' };
+      const isCurrent = iter === visibleCount;
+
+      return `
+        <tr class="border-b border-white/5 text-xs font-mono transition-colors ${isCurrent ? 'bg-primary/10' : 'hover:bg-white/5'}">
+          <td class="py-2.5 px-3 text-on-surface-variant font-bold">${iter}</td>
+          <td class="py-2.5 px-3 text-cyan-300">${Array.isArray(j.x) ? `[${j.x.join(', ')}]` : '✓ Converged'}</td>
+          <td class="py-2.5 px-3 text-on-surface-variant">${j.error}</td>
+          <td class="py-2.5 px-3 text-emerald-300 font-semibold">${Array.isArray(gs.x) ? `[${gs.x.join(', ')}]` : '✓ Converged'}</td>
+          <td class="py-2.5 px-3 ${gs.error !== '-' ? 'text-emerald-400 font-bold' : 'text-on-surface-variant'}">${gs.error}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const summaryEl = document.getElementById('academicLinearSummary');
+    if (summaryEl) {
+      summaryEl.innerHTML = `
+        <span class="material-symbols-outlined text-[16px] text-emerald-400">verified</span>
+        <span><strong>Gauss-Seidel:</strong> ${res.gaussSeidel.iterations} iterations &bull; <strong>Jacobi:</strong> ${res.jacobi.iterations} iterations &bull; <strong>Convergence Speedup:</strong> <span class="text-primary font-bold">${res.speedup}x faster</span>.</span>
+      `;
+    }
+  }
+
+  redrawLinearCanvas() {
+    const canvas = document.getElementById('academicLinearCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.parentElement.clientWidth;
+    const h = canvas.parentElement.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, w, h);
+
+    const res = this.academicState.linear.result;
+    if (!res) return;
+
+    const jSteps = res.jacobi.steps;
+    const gsSteps = res.gaussSeidel.steps;
+    const maxIters = Math.max(jSteps.length, gsSteps.length, 1);
+    const visibleStep = this.academicState.linear.step;
+
+    // Background grid
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.lineWidth = 1;
+    for (let y = 30; y < h - 20; y += 30) {
+      ctx.beginPath();
+      ctx.moveTo(35, y);
+      ctx.lineTo(w - 15, y);
+      ctx.stroke();
+    }
+
+    const getX = (iter) => 35 + ((iter - 1) / Math.max(1, maxIters - 1)) * (w - 60);
+    const getY = (errVal) => {
+      if (typeof errVal !== 'number' || errVal <= 0) return h - 30;
+      const logVal = Math.log10(errVal);
+      const clamped = Math.max(-5, Math.min(1, logVal));
+      return 25 + ((1 - clamped) / 6) * (h - 55);
+    };
+
+    // Axes
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.beginPath();
+    ctx.moveTo(35, 20);
+    ctx.lineTo(35, h - 25);
+    ctx.lineTo(w - 15, h - 25);
+    ctx.stroke();
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '9px JetBrains Mono';
+    ctx.fillText('10⁰', 10, 30);
+    ctx.fillText('10⁻²', 10, h / 2);
+    ctx.fillText('10⁻⁵', 10, h - 30);
+    ctx.fillText('k=1', 35, h - 10);
+    ctx.fillText(`k=${maxIters}`, w - 45, h - 10);
+
+    // Plot Jacobi curve (Cyan)
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const jVisible = jSteps.slice(0, visibleStep);
+    jVisible.forEach((pt, i) => {
+      const px = getX(pt.iteration);
+      const py = getY(pt.error);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    jVisible.forEach((pt) => {
+      const px = getX(pt.iteration);
+      const py = getY(pt.error);
+      ctx.fillStyle = '#00f0ff';
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Plot Gauss-Seidel curve (Orange-Red)
+    ctx.strokeStyle = '#ff5722';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    const gsVisible = gsSteps.slice(0, visibleStep);
+    gsVisible.forEach((pt, i) => {
+      const px = getX(pt.iteration);
+      const py = getY(pt.error);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    gsVisible.forEach((pt) => {
+      const px = getX(pt.iteration);
+      const py = getY(pt.error);
+      ctx.fillStyle = '#ff5722';
+      ctx.beginPath();
+      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Highlight active step
+    if (gsVisible.length > 0) {
+      const lastGS = gsVisible[gsVisible.length - 1];
+      const lx = getX(lastGS.iteration);
+      const ly = getY(lastGS.error);
+      ctx.strokeStyle = '#ff9800';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(lx, ly, 7, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // ------------------------------------------
+  // TAB 2: BISECTION METHOD
+  // ------------------------------------------
+  validateBisectionBracket() {
+    const fKey = document.getElementById('bisectionFuncSelect')?.value || 'cube1';
+    const preset = AcademicLab.bisectionPresets[fKey] || AcademicLab.bisectionPresets.cube1;
+    const a = parseFloat(document.getElementById('bisInputA')?.value || preset.defaultA);
+    const b = parseFloat(document.getElementById('bisInputB')?.value || preset.defaultB);
+    const fa = preset.f(a);
+    const fb = preset.f(b);
+
+    const statusEl = document.getElementById('bisBracketStatus');
+    if (!statusEl) return false;
+
+    if (fa * fb <= 0) {
+      statusEl.className = 'p-2 rounded-lg bg-surface-card border border-emerald-500/30 text-[11px] font-mono flex items-center gap-2 text-emerald-400';
+      statusEl.innerHTML = `
+        <span class="material-symbols-outlined text-[15px]">check_circle</span>
+        <span>Valid Bracket: f(${a.toFixed(2)}) = ${fa.toFixed(2)} and f(${b.toFixed(2)}) = ${fb.toFixed(2)} have opposite signs.</span>
+      `;
+      return true;
+    } else {
+      statusEl.className = 'p-2 rounded-lg bg-surface-card border border-red-500/40 text-[11px] font-mono flex items-center gap-2 text-red-400';
+      statusEl.innerHTML = `
+        <span class="material-symbols-outlined text-[15px]">error</span>
+        <span>Invalid Bracket: f(a) & f(b) have the SAME sign! Root is not guaranteed.</span>
+      `;
+      return false;
+    }
+  }
+
+  initBisectionDemo() {
+    const fKey = document.getElementById('bisectionFuncSelect')?.value || 'cube1';
+    const a = parseFloat(document.getElementById('bisInputA')?.value || 2.0);
+    const b = parseFloat(document.getElementById('bisInputB')?.value || 3.0);
+
+    const res = AcademicLab.runBisection({ funcId: fKey, a, b });
+    this.academicState.bisection = {
+      result: res,
+      step: res.steps ? res.steps.length : 0,
+      animating: false,
+      timer: null
+    };
+
+    this.renderBisectionTable(this.academicState.bisection.step);
+    this.redrawBisectionCanvas();
+  }
+
+  playBisectionAnimation() {
+    if (!this.validateBisectionBracket()) return;
+    this.synth.chime();
+    const st = this.academicState.bisection;
+    if (st.timer) clearInterval(st.timer);
+
+    st.step = 0;
+    st.animating = true;
+    const maxSteps = st.result.steps.length;
+
+    st.timer = setInterval(() => {
+      if (st.step < maxSteps) {
+        st.step++;
+        this.synth.click();
+        this.renderBisectionTable(st.step);
+        this.redrawBisectionCanvas();
+      } else {
+        clearInterval(st.timer);
+        st.animating = false;
+        this.synth.chime();
+      }
+    }, 320);
+  }
+
+  stepBisection() {
+    this.synth.click();
+    const st = this.academicState.bisection;
+    if (st.timer) clearInterval(st.timer);
+    if (st.step < st.result.steps.length) {
+      st.step++;
+      this.renderBisectionTable(st.step);
+      this.redrawBisectionCanvas();
+    }
+  }
+
+  renderBisectionTable(currentStep) {
+    const res = this.academicState.bisection.result;
+    if (!res || !res.steps) return;
+    const tbody = document.getElementById('academicBisectionTable');
+    if (!tbody) return;
+
+    const visibleSteps = res.steps.slice(0, currentStep);
+
+    tbody.innerHTML = visibleSteps.map((s, idx) => {
+      const isCurrent = idx === visibleSteps.length - 1;
+      const subInterval = s.sign === '+' ? `[${s.a}, ${s.c}]` : `[${s.c}, ${s.b}]`;
+      return `
+        <tr class="border-b border-white/5 text-xs font-mono transition-colors ${isCurrent ? 'bg-primary/10' : 'hover:bg-white/5'}">
+          <td class="py-2.5 px-3 text-on-surface-variant font-bold">${s.iteration}</td>
+          <td class="py-2.5 px-3 text-red-400 font-semibold">${s.a}</td>
+          <td class="py-2.5 px-3 text-blue-400 font-semibold">${s.b}</td>
+          <td class="py-2.5 px-3 text-primary font-bold">${s.c}</td>
+          <td class="py-2.5 px-3 text-on-surface">${s.fc} (${s.sign})</td>
+          <td class="py-2.5 px-3 text-emerald-400">${s.error}</td>
+          <td class="py-2.5 px-3 text-cyan-300 font-mono text-[11px]">${subInterval}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const rootEl = document.getElementById('academicBisectionRoot');
+    if (rootEl) {
+      rootEl.innerHTML = `
+        <span class="material-symbols-outlined text-[16px] text-emerald-400">verified</span>
+        <span><strong>Converged Root:</strong> x* &approx; <span class="text-primary font-bold text-sm">${res.root}</span> &bull; <strong>Residual f(x*):</strong> ${res.fRoot} in <strong>${res.steps.length} steps</strong>.</span>
+      `;
+    }
+  }
+
+  redrawBisectionCanvas() {
+    const canvas = document.getElementById('academicBisectionCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.parentElement.clientWidth;
+    const h = canvas.parentElement.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, w, h);
+
+    const res = this.academicState.bisection.result;
+    if (!res || !res.preset) return;
+
+    const preset = res.preset;
+    const xMin = preset.xMin;
+    const xMax = preset.xMax;
+    const pts = AcademicLab.sampleFunction(preset.f, xMin, xMax, 100);
+
+    let yMin = Infinity, yMax = -Infinity;
+    pts.forEach(p => {
+      if (p.y < yMin) yMin = p.y;
+      if (p.y > yMax) yMax = p.y;
+    });
+    if (yMin > 0) yMin = -2;
+    if (yMax < 0) yMax = 2;
+
+    const mapX = (x) => 35 + ((x - xMin) / (xMax - xMin)) * (w - 70);
+    const mapY = (y) => (h - 25) - ((y - yMin) / (yMax - yMin)) * (h - 50);
+
+    // Zero-axis lines
+    const zeroY = mapY(0);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(35, zeroY);
+    ctx.lineTo(w - 35, zeroY);
+    ctx.stroke();
+
+    // Plot f(x) curve
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    pts.forEach((p, idx) => {
+      const px = mapX(p.x);
+      const py = mapY(p.y);
+      if (idx === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Active bracket at current step
+    const curStepIdx = Math.max(0, Math.min(this.academicState.bisection.step - 1, res.steps.length - 1));
+    const stepData = res.steps[curStepIdx];
+    if (stepData) {
+      const ax = mapX(stepData.a);
+      const bx = mapX(stepData.b);
+      const cx = mapX(stepData.c);
+
+      // Shaded active interval [a, b]
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.08)';
+      ctx.fillRect(ax, 15, bx - ax, h - 40);
+
+      // Vertical line for a (Crimson)
+      ctx.strokeStyle = '#f87171';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ax, 15);
+      ctx.lineTo(ax, h - 25);
+      ctx.stroke();
+
+      // Vertical line for b (Blue)
+      ctx.strokeStyle = '#60a5fa';
+      ctx.beginPath();
+      ctx.moveTo(bx, 15);
+      ctx.lineTo(bx, h - 25);
+      ctx.stroke();
+
+      // Vertical dashed line for midpoint c (Amber)
+      ctx.strokeStyle = '#fbbf24';
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(cx, 15);
+      ctx.lineTo(cx, h - 25);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Midpoint point on curve
+      const cy = mapY(stepData.fc);
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Text tags
+      ctx.font = '10px JetBrains Mono';
+      ctx.fillStyle = '#f87171';
+      ctx.fillText(`a=${stepData.a}`, ax + 4, 30);
+      ctx.fillStyle = '#60a5fa';
+      ctx.fillText(`b=${stepData.b}`, bx - 45, 30);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText(`c=${stepData.c}`, cx + 4, 45);
+    }
+  }
+
+  // ------------------------------------------
+  // TAB 3: NEWTON-RAPHSON METHOD
+  // ------------------------------------------
+  initNewtonDemo() {
+    const fKey = document.getElementById('newtonFuncSelect')?.value || 'cube1';
+    const x0 = parseFloat(document.getElementById('newtonInputX0')?.value || 2.0);
+
+    const res = AcademicLab.runNewtonRaphson({ funcId: fKey, x0 });
+    this.academicState.newton = {
+      result: res,
+      step: res.steps ? res.steps.length : 0,
+      animating: false,
+      timer: null
+    };
+
+    this.renderNewtonTable(this.academicState.newton.step);
+    this.redrawNewtonCanvas();
+  }
+
+  playNewtonAnimation() {
+    this.synth.chime();
+    const st = this.academicState.newton;
+    if (st.timer) clearInterval(st.timer);
+
+    st.step = 0;
+    st.animating = true;
+    const maxSteps = st.result.steps.length;
+
+    st.timer = setInterval(() => {
+      if (st.step < maxSteps) {
+        st.step++;
+        this.synth.click();
+        this.renderNewtonTable(st.step);
+        this.redrawNewtonCanvas();
+      } else {
+        clearInterval(st.timer);
+        st.animating = false;
+        this.synth.chime();
+      }
+    }, 380);
+  }
+
+  stepNewton() {
+    this.synth.click();
+    const st = this.academicState.newton;
+    if (st.timer) clearInterval(st.timer);
+    if (st.step < st.result.steps.length) {
+      st.step++;
+      this.renderNewtonTable(st.step);
+      this.redrawNewtonCanvas();
+    }
+  }
+
+  renderNewtonTable(currentStep) {
+    const res = this.academicState.newton.result;
+    if (!res || !res.steps) return;
+    const tbody = document.getElementById('academicNewtonTable');
+    if (!tbody) return;
+
+    const visibleSteps = res.steps.slice(0, currentStep);
+
+    tbody.innerHTML = visibleSteps.map((s, idx) => {
+      const isCurrent = idx === visibleSteps.length - 1;
+      return `
+        <tr class="border-b border-white/5 text-xs font-mono transition-colors ${isCurrent ? 'bg-primary/10' : 'hover:bg-white/5'}">
+          <td class="py-2.5 px-3 text-on-surface-variant font-bold">${s.iteration}</td>
+          <td class="py-2.5 px-3 text-cyan-300 font-semibold">${s.x}</td>
+          <td class="py-2.5 px-3 text-amber-300">${s.fx}</td>
+          <td class="py-2.5 px-3 text-on-surface-variant">${s.dfx}</td>
+          <td class="py-2.5 px-3 text-primary font-bold">${s.nextX}</td>
+          <td class="py-2.5 px-3 text-emerald-400 font-bold">${s.error}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const rootEl = document.getElementById('academicNewtonRoot');
+    if (rootEl) {
+      rootEl.innerHTML = `
+        <span class="material-symbols-outlined text-[16px] text-emerald-400">verified</span>
+        <span><strong>Converged Root:</strong> x* &approx; <span class="text-primary font-bold text-sm">${res.root}</span> &bull; <strong>Quadratic Steps:</strong> ${res.steps.length} &bull; <strong>Residual:</strong> ${res.fRoot}.</span>
+      `;
+    }
+  }
+
+  redrawNewtonCanvas() {
+    const canvas = document.getElementById('academicNewtonCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.parentElement.clientWidth;
+    const h = canvas.parentElement.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, w, h);
+
+    const res = this.academicState.newton.result;
+    if (!res || !res.preset) return;
+
+    const preset = res.preset;
+    const xMin = preset.xMin;
+    const xMax = preset.xMax;
+    const pts = AcademicLab.sampleFunction(preset.f, xMin, xMax, 100);
+
+    let yMin = Infinity, yMax = -Infinity;
+    pts.forEach(p => {
+      if (p.y < yMin) yMin = p.y;
+      if (p.y > yMax) yMax = p.y;
+    });
+    if (yMin > 0) yMin = -2;
+    if (yMax < 0) yMax = 2;
+
+    const mapX = (x) => 35 + ((x - xMin) / (xMax - xMin)) * (w - 70);
+    const mapY = (y) => (h - 25) - ((y - yMin) / (yMax - yMin)) * (h - 50);
+
+    // Zero-axis
+    const zeroY = mapY(0);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(35, zeroY);
+    ctx.lineTo(w - 35, zeroY);
+    ctx.stroke();
+
+    // f(x) curve
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    pts.forEach((p, idx) => {
+      const px = mapX(p.x);
+      const py = mapY(p.y);
+      if (idx === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Tangent Projection for active step
+    const curStepIdx = Math.max(0, Math.min(this.academicState.newton.step - 1, res.steps.length - 1));
+    const s = res.steps[curStepIdx];
+    if (s) {
+      const xk = s.x;
+      const fxk = preset.f(xk);
+      const nextX = s.nextX;
+
+      const pxK = mapX(xk);
+      const pyK = mapY(fxk);
+      const pNextX = mapX(nextX);
+      const pNextY = zeroY;
+
+      // Vertical line from (xk, 0) up to (xk, fxk)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(pxK, zeroY);
+      ctx.lineTo(pxK, pyK);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Tangent line from (xk, fxk) down to (nextX, 0)
+      ctx.strokeStyle = '#ff9800';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(pxK, pyK);
+      ctx.lineTo(pNextX, pNextY);
+      ctx.stroke();
+
+      // Point on curve
+      ctx.fillStyle = '#ff9800';
+      ctx.beginPath();
+      ctx.arc(pxK, pyK, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Intercept on x-axis
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath();
+      ctx.arc(pNextX, pNextY, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Text Labels
+      ctx.font = '10px JetBrains Mono';
+      ctx.fillStyle = '#ff9800';
+      ctx.fillText(`(x_${s.iteration}, f(x))`, pxK + 6, pyK - 4);
+      ctx.fillStyle = '#10b981';
+      ctx.fillText(`x_${s.iteration + 1}=${nextX}`, pNextX - 20, pNextY + 16);
+    }
+  }
+
+  // ------------------------------------------
+  // TAB 4: POWER ITERATION (EIGENVALUES)
+  // ------------------------------------------
+  initPowerDemo() {
+    const pKey = document.getElementById('powerPresetSelect')?.value || 'symmetric';
+    const res = AcademicLab.runPowerIteration({ preset: pKey });
+    this.academicState.power = {
+      result: res,
+      step: res.steps ? res.steps.length : 0,
+      animating: false,
+      timer: null
+    };
+
+    this.renderPowerTable(this.academicState.power.step);
+    this.redrawPowerCanvas();
+  }
+
+  playPowerAnimation() {
+    this.synth.chime();
+    const st = this.academicState.power;
+    if (st.timer) clearInterval(st.timer);
+
+    st.step = 0;
+    st.animating = true;
+    const maxSteps = st.result.steps.length;
+
+    st.timer = setInterval(() => {
+      if (st.step < maxSteps) {
+        st.step++;
+        this.synth.click();
+        this.renderPowerTable(st.step);
+        this.redrawPowerCanvas();
+      } else {
+        clearInterval(st.timer);
+        st.animating = false;
+        this.synth.chime();
+      }
+    }, 280);
+  }
+
+  stepPower() {
+    this.synth.click();
+    const st = this.academicState.power;
+    if (st.timer) clearInterval(st.timer);
+    if (st.step < st.result.steps.length) {
+      st.step++;
+      this.renderPowerTable(st.step);
+      this.redrawPowerCanvas();
+    }
+  }
+
+  renderPowerTable(currentStep) {
+    const res = this.academicState.power.result;
+    if (!res || !res.steps) return;
+    const tbody = document.getElementById('academicPowerTable');
+    if (!tbody) return;
+
+    const visibleSteps = res.steps.slice(0, currentStep);
+
+    tbody.innerHTML = visibleSteps.map((s, idx) => {
+      const isCurrent = idx === visibleSteps.length - 1;
+      return `
+        <tr class="border-b border-white/5 text-xs font-mono transition-colors ${isCurrent ? 'bg-primary/10' : 'hover:bg-white/5'}">
+          <td class="py-2.5 px-3 text-on-surface-variant font-bold">${s.iteration}</td>
+          <td class="py-2.5 px-3 text-primary font-bold text-sm">${s.lambda}</td>
+          <td class="py-2.5 px-3 text-cyan-300 font-semibold">[${s.eigenvector.join(', ')}]</td>
+          <td class="py-2.5 px-3 text-emerald-400 font-bold">${s.error}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const eigenEl = document.getElementById('academicPowerEigen');
+    if (eigenEl) {
+      eigenEl.innerHTML = `
+        <span class="material-symbols-outlined text-[16px] text-emerald-400">verified</span>
+        <span><strong>Dominant Eigenvalue:</strong> &lambda;₁ &approx; <span class="text-primary font-bold text-sm">${res.dominantEigenvalue}</span> &bull; <strong>Principal Eigenvector:</strong> [${res.eigenvector.join(', ')}].</span>
+      `;
+    }
+  }
+
+  redrawPowerCanvas() {
+    const canvas = document.getElementById('academicPowerCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.parentElement.clientWidth;
+    const h = canvas.parentElement.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, w, h);
+
+    const res = this.academicState.power.result;
+    if (!res || !res.steps) return;
+
+    const steps = res.steps;
+    const currentStep = Math.max(1, Math.min(this.academicState.power.step, steps.length));
+    const visibleSteps = steps.slice(0, currentStep);
+
+    // Left half: Rayleigh Quotient curve
+    const plotW = w * 0.58;
+    const barW = w * 0.38;
+
+    // Background grid
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.beginPath();
+    ctx.moveTo(35, 25);
+    ctx.lineTo(plotW, 25);
+    ctx.moveTo(35, h / 2);
+    ctx.lineTo(plotW, h / 2);
+    ctx.moveTo(35, h - 25);
+    ctx.lineTo(plotW, h - 25);
+    ctx.stroke();
+
+    // Axes
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.beginPath();
+    ctx.moveTo(35, 15);
+    ctx.lineTo(35, h - 25);
+    ctx.lineTo(plotW, h - 25);
+    ctx.stroke();
+
+    // Rayleigh quotient bounds
+    let lMin = Infinity, lMax = -Infinity;
+    steps.forEach(s => {
+      if (s.lambda < lMin) lMin = s.lambda;
+      if (s.lambda > lMax) lMax = s.lambda;
+    });
+    const range = Math.max(0.1, lMax - lMin);
+    const mapY = (l) => (h - 35) - ((l - (lMin - range * 0.1)) / (range * 1.2)) * (h - 55);
+    const mapX = (iter) => 35 + ((iter - 1) / Math.max(1, steps.length - 1)) * (plotW - 50);
+
+    // Plot Rayleigh quotient curve
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    visibleSteps.forEach((s, idx) => {
+      const px = mapX(s.iteration);
+      const py = mapY(s.lambda);
+      if (idx === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Dots
+    visibleSteps.forEach(s => {
+      const px = mapX(s.iteration);
+      const py = mapY(s.lambda);
+      ctx.fillStyle = '#00f0ff';
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Labels
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '9px JetBrains Mono';
+    ctx.fillText(`λ=${lMax.toFixed(2)}`, 5, 25);
+    ctx.fillText(`λ=${lMin.toFixed(2)}`, 5, h - 35);
+    ctx.fillText('k=1', 35, h - 10);
+    ctx.fillText(`k=${steps.length}`, plotW - 30, h - 10);
+
+    // Right half: Normalized Eigenvector Bars at current step
+    const curStepData = visibleSteps[visibleSteps.length - 1];
+    if (curStepData && curStepData.eigenvector) {
+      const vec = curStepData.eigenvector;
+      const barStartX = plotW + 25;
+      const barAvailableW = w - barStartX - 20;
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '10px Space Grotesk';
+      ctx.fillText('Eigenvector Coordinates v^(k):', barStartX, 25);
+
+      vec.forEach((vVal, i) => {
+        const barY = 45 + i * 36;
+        const normW = Math.max(2, Math.abs(vVal) * barAvailableW);
+
+        // Track bar
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.fillRect(barStartX, barY, barAvailableW, 16);
+
+        // Filled bar
+        const gradient = ctx.createLinearGradient(barStartX, 0, barStartX + normW, 0);
+        gradient.addColorStop(0, '#0566d9');
+        gradient.addColorStop(1, '#10b981');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(barStartX, barY, normW, 16);
+
+        // Label
+        ctx.fillStyle = '#dee2f6';
+        ctx.font = '10px JetBrains Mono';
+        ctx.fillText(`v[${i + 1}] = ${vVal.toFixed(4)}`, barStartX + 6, barY + 12);
+      });
+    }
+  }
+
+  // ==========================================
+  // --- MODALS & EXTRAS ---
+  // ==========================================
+  setupModals() {
+    // Show the Math (Thermal)
+    const showMathBtn = document.getElementById('showThermalMathBtn');
+    if (showMathBtn) {
+      showMathBtn.addEventListener('click', () => {
+        this.synth.click();
+        document.getElementById('thermalMathModal').classList.remove('hidden');
+      });
+    }
+
+    // Compare Solvers Modal
+    const compareBtn = document.getElementById('compareSolversBtn');
+    if (compareBtn) {
+      compareBtn.addEventListener('click', () => {
+        this.synth.click();
+        this.openCompareSolversModal();
+      });
+    }
+
+    // Optimize Cooling (Bisection) Modal
+    const optCoolingBtn = document.getElementById('optimizeCoolingBtn');
+    if (optCoolingBtn) {
+      optCoolingBtn.addEventListener('click', () => {
+        this.synth.click();
+        this.openBisectionOptimizerModal();
+      });
+    }
+
+    // Save Simulation Report
+    const exportBtn = document.getElementById('exportThermalReportBtn');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', () => {
+        this.synth.click();
+        this.generateSimulationReport();
+      });
+    }
+
+    // Close buttons on all modals
+    document.querySelectorAll('.close-modal-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        this.synth.click();
+        const modal = btn.closest('.modal-container');
+        if (modal) modal.classList.add('hidden');
+      });
+    });
+
+    // What If LinkRank
+    const whatIfBtn = document.getElementById('whatIfBtn');
+    if (whatIfBtn) {
+      whatIfBtn.addEventListener('click', () => this.openWhatIfModal());
+    }
+
+    // Show Math (LinkRank)
+    const showLinkRankMathBtn = document.getElementById('showLinkRankMathBtn');
+    if (showLinkRankMathBtn) {
+      showLinkRankMathBtn.addEventListener('click', () => {
+        this.synth.click();
+        document.getElementById('linkrankMathModal').classList.remove('hidden');
+      });
+    }
+  }
+
+  openCompareSolversModal() {
+    const modal = document.getElementById('compareSolversModal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    const res = this.thermalGrid.compareSolvers({ maxIterations: 45, tolerance: 0.001 });
+
+    document.getElementById('compareJacobiIter').textContent = res.jacobi.iterations;
+    document.getElementById('compareJacobiError').textContent = res.jacobi.finalError.toExponential(3);
+    document.getElementById('compareJacobiTime').textContent = `${res.jacobi.durationMs.toFixed(1)} ms`;
+
+    document.getElementById('compareGSIter').textContent = res.gaussSeidel.iterations;
+    document.getElementById('compareGSError').textContent = res.gaussSeidel.finalError.toExponential(3);
+    document.getElementById('compareGSTime').textContent = `${res.gaussSeidel.durationMs.toFixed(1)} ms`;
+
+    document.getElementById('compareSpeedup').textContent = `${res.speedup}x Faster`;
+
+    // Render Convergence Graph Canvas
+    const canvas = document.getElementById('compareGraphCanvas');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.fillStyle = '#090e1c';
+      ctx.fillRect(0, 0, w, h);
+
+      // Axes
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+      ctx.strokeRect(40, 20, w - 60, h - 50);
+
+      // Plot Jacobi Curve (Cyan)
+      const jHist = res.jacobi.history;
+      ctx.strokeStyle = '#00f0ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      jHist.forEach((pt, i) => {
+        const x = 40 + (i / Math.max(1, jHist.length - 1)) * (w - 60);
+        const y = 20 + (Math.log10(Math.max(1e-5, pt.error)) / -4.0) * (h - 50);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Plot Gauss-Seidel Curve (Orange-Red)
+      const gsHist = res.gaussSeidel.history;
+      ctx.strokeStyle = '#ff5722';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      gsHist.forEach((pt, i) => {
+        const x = 40 + (i / Math.max(1, jHist.length - 1)) * (w - 60);
+        const y = 20 + (Math.log10(Math.max(1e-5, pt.error)) / -4.0) * (h - 50);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Legend
+      ctx.fillStyle = '#00f0ff';
+      ctx.font = '10px JetBrains Mono';
+      ctx.fillText('— Jacobi', w - 140, 36);
+      ctx.fillStyle = '#ff5722';
+      ctx.fillText('— Gauss-Seidel', w - 140, 52);
+    }
+  }
+
+  openBisectionOptimizerModal() {
+    const modal = document.getElementById('bisectionOptimizerModal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    const res = this.thermalGrid.optimizeCoolingBisection({ targetMaxTemp: 75.0, tolerance: 0.01 });
+
+    document.getElementById('bisectionOptimalPct').textContent = `${res.optimalPercent}%`;
+    document.getElementById('bisectionAchievedTemp').textContent = `${res.achievedTemp}°C (Target: ≤ 75°C)`;
+    document.getElementById('bisectionStepsCount').textContent = `${res.steps.length} Steps`;
+
+    const tbody = document.getElementById('bisectionStepsTable');
+    if (tbody) {
+      tbody.innerHTML = res.steps.map(s => `
+        <tr class="border-b border-white/5 text-xs font-mono">
+          <td class="py-2 px-3 text-on-surface-variant font-bold">${s.step}</td>
+          <td class="py-2 px-3">${s.a}%</td>
+          <td class="py-2 px-3">${s.b}%</td>
+          <td class="py-2 px-3 text-primary font-bold">${s.mid}%</td>
+          <td class="py-2 px-3 ${s.maxTemp <= 75 ? 'text-emerald-400 font-bold' : 'text-red-400'}">${s.maxTemp}°C</td>
+          <td class="py-2 px-3 font-semibold ${s.satisfied ? 'text-emerald-400' : 'text-amber-400'}">
+            ${s.satisfied ? '✓ Satisfied' : '✗ Too Hot'}
+          </td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  generateSimulationReport() {
+    const { stats, iterations, finalError } = this.thermalResult;
+    const reportHtml = `
+      NUMERIX LAB - SCIENTIFIC SIMULATION REPORT
+      Date: ${new Date().toLocaleString()}
+      Module: THERMALX - 2D Thermal Field Solver
+      --------------------------------------------------
+      CONFIGURATION:
+      Ambient Temperature: ${this.thermalConfig.ambient}°C
+      CPU Die Temperature: ${this.thermalConfig.cpu}°C
+      Discrete GPU Temperature: ${this.thermalConfig.gpu}°C
+      Cooling Convection: ${Math.round(this.thermalConfig.cooling * 100)}%
+      Mesh Resolution: ${this.thermalConfig.resolution.toUpperCase()} (${this.thermalGrid.rows}x${this.thermalGrid.cols})
+      Numerical Method: ${this.thermalConfig.solver.toUpperCase()}
+      
+      COMPUTATIONAL RESULTS:
+      Converged: YES (in ${iterations} iterations)
+      Final Residual Error: ${finalError.toExponential(4)}
+      Maximum Field Temperature: ${stats.maxTemp}°C
+      Average Chassis Temperature: ${stats.avgTemp}°C
+      Active Hotspot Count: ${stats.hotspots}
+      Primary Hotspot: ${stats.primaryHotspot.name} (${stats.primaryHotspot.temp}°C)
+      Chassis Thermal State: ${stats.status.toUpperCase()}
+      --------------------------------------------------
+      Verified with 2D Finite Difference Poisson Formulation.
+    `;
+
+    const blob = new Blob([reportHtml], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `THERMALX_Report_${Date.now()}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Instantiate App when DOM is loaded
+window.addEventListener('DOMContentLoaded', () => {
+  window.app = new NumerixApp();
+});
