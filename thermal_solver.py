@@ -120,17 +120,25 @@ class ThermalGrid2D:
         residuals = []
         start_time = time.perf_counter()
 
+        # ---------------------------------------------------------------------
+        # JACOBI ITERATIVE SOLVER (SIMULTANEOUS DISPLACEMENT):
+        # In Jacobi iteration, every interior node is updated using ONLY the
+        # temperatures from the PREVIOUS iteration sweep (k).
+        # Formula: T_new[i, j] = 0.25 * (T_old[i+1, j] + T_old[i-1, j] + T_old[i, j+1] + T_old[i, j-1])
+        # Notice that a fresh copy 'T_new' is required to prevent overwriting.
+        # ---------------------------------------------------------------------
         for it in range(1, max_iter + 1):
             T_new = T.copy()
 
-            # Vectorized 5-point interior update
+            # Vectorized 5-point interior average update (North + South + East + West) / 4
             T_new[1:-1, 1:-1] = 0.25 * (
-                T[2:, 1:-1] +    # South (i+1, j)
-                T[:-2, 1:-1] +   # North (i-1, j)
-                T[1:-1, 2:] +    # East  (i, j+1)
-                T[1:-1, :-2]     # West  (i, j-1)
+                T[2:, 1:-1] +    # South neighbor node (i+1, j)
+                T[:-2, 1:-1] +   # North neighbor node (i-1, j)
+                T[1:-1, 2:] +    # East neighbor node  (i, j+1)
+                T[1:-1, :-2]     # West neighbor node  (i, j-1)
             )
 
+            # Re-apply boundary conditions and fixed heat sources
             self.apply_boundary_conditions(T_new)
 
             # L-infinity norm of residual error: max |T^(k+1) - T^(k)|
@@ -138,6 +146,7 @@ class ThermalGrid2D:
             residuals.append(max_diff)
 
             T = T_new
+            # Stopping criterion: Stop once maximum change across all nodes drops below tolerance (0.001 °C)
             if max_diff < tol:
                 elapsed = time.perf_counter() - start_time
                 return {
@@ -163,10 +172,16 @@ class ThermalGrid2D:
 
     def solve_gauss_seidel(self, max_iter=1000, tol=1e-3):
         """
-        Solves 2D Heat Conduction using Gauss-Seidel Iteration (Successive update).
-        Uses newly updated values immediately within the current sweep.
-        Syllabus Formula:
-            T_{i,j}^{(k+1)} = (T_{i+1,j}^{(k)} + T_{i-1,j}^{(k+1)} + T_{i,j+1}^{(k)} + T_{i,j-1}^{(k+1)}) / 4
+        GAUSS-SEIDEL ITERATIVE SOLVER (SUCCESSIVE DISPLACEMENT):
+        Unlike Jacobi, Gauss-Seidel immediately uses the NEWLY computed values
+        within the VERY SAME sweep as soon as they are available.
+        
+        Formula:
+            T_{i,j}^(k+1) = ( T_{i+1,j}^(k) + T_{i-1,j}^(k+1) + T_{i,j+1}^(k) + T_{i,j-1}^(k+1) ) / 4
+            
+        Why it is 2x Faster:
+            Because newly computed temperatures propagate immediately across the
+            grid within the same iteration pass, cutting total iterations in half!
         """
         T = np.full((self.rows, self.cols), self.ambient, dtype=np.float64)
         self.apply_boundary_conditions(T)
@@ -174,7 +189,7 @@ class ThermalGrid2D:
         residuals = []
         start_time = time.perf_counter()
 
-        # Build mask of interior nodes excluding fixed sources
+        # Build boolean mask of interior nodes excluding fixed sources
         is_fixed = np.zeros((self.rows, self.cols), dtype=bool)
         is_fixed[0, :] = is_fixed[-1, :] = is_fixed[:, 0] = is_fixed[:, -1] = True
         for src in self.sources:
@@ -185,21 +200,30 @@ class ThermalGrid2D:
         for it in range(1, max_iter + 1):
             max_diff = 0.0
 
+            # Sweep systematically row-by-row and column-by-column
             for i in range(1, self.rows - 1):
                 for j in range(1, self.cols - 1):
                     if is_fixed[i, j]:
                         continue
 
                     old_val = T[i, j]
-                    # In-place update uses already updated T[i-1, j] and T[i, j-1]
+                    
+                    # -------------------------------------------------------------
+                    # IN-PLACE UPDATE:
+                    # Uses already updated T[i-1, j] (North) and T[i, j-1] (West)
+                    # from the CURRENT sweep k+1, while using T[i+1, j] and T[i, j+1]
+                    # from sweep k. No separate T_new array needed!
+                    # -------------------------------------------------------------
                     new_val = 0.25 * (T[i+1, j] + T[i-1, j] + T[i, j+1] + T[i, j-1])
                     T[i, j] = new_val
 
+                    # Track largest single-node temperature variation (L-infinity norm)
                     diff = abs(new_val - old_val)
                     if diff > max_diff:
                         max_diff = diff
 
             residuals.append(max_diff)
+            # Stopping criterion: Stop once error drops below tolerance (0.001 °C)
             if max_diff < tol:
                 elapsed = time.perf_counter() - start_time
                 return {
