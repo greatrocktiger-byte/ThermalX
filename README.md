@@ -14,10 +14,17 @@
 ### 1. Live Web Simulation & Heat Flux Quiver Vectors
 ![Heatmap and Quiver Field](screenshots/02_results_quiver_isotherms.png)
 
-### 2. 1D Cross-Section Spatial Slice Profile $T(x)$
-![1D Temperature Profile Cutline](screenshots/03_1d_slice_profile.png)
+### 2. Multi-Run Dual-Envelope Curves (Min Baseline vs Max Thermal Envelope)
+![Multi-Run Dual-Envelope Curves](screenshots/09_view_graphically_multi.png)
+> **Blue Curve:** Lowest temperature floor ($T_{\min}$) across edge cooling vents.  
+> **Red Curve:** Highest temperature transition envelope ($T_{\max}$), rising from cold boundary to peak core and descending back down (Low $\rightarrow$ High $\rightarrow$ Low).
 
-### 3. Integrated Python Code Inspector
+### 3. Single-Run In-Depth Spatial Gradient ($|\nabla T|$) & Cutline Profile
+![Single-Run Spatial Gradient Profile](screenshots/10_view_graphically_single.png)
+> **Red Curve:** Continuous temperature distribution $T(x)$.  
+> **Amber Curve:** Spatial temperature gradient $|\nabla T(x)| = |\frac{\partial T}{\partial x}|$ in $^\circ\text{C}/\text{cm}$, exposing maximum thermal stress at the die-substrate interface.
+
+### 4. Integrated Python Code Inspector
 ![Python Code In-Browser Inspector](screenshots/04_python_code_modal.png)
 
 ---

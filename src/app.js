@@ -85,6 +85,10 @@ export class NumerixApp {
     this.customSelectedCell = null;
     this.runHistory = [];
     this.selectedHistoryRun = null;
+    this.graphicalTab = 'multi';
+    this.graphicalSliceRow = 11;
+    this.graphicalActiveRuns = new Set();
+    this.graphicalSelectedRunIdx = null;
 
     // LinkRank State
     this.currentCategory = 'technology';
@@ -153,6 +157,8 @@ export class NumerixApp {
     // Lifecycle triggers for specific screens
     if (screenId === 'thermalx-config') {
       this.syncThermalConfigUI();
+    } else if (screenId === 'thermalx-curves') {
+      this.renderGraphicalScreen();
     } else if (screenId === 'thermalx-custom') {
       this.initCustomGridEnvironment();
     } else if (screenId === 'linkrank-editor') {
@@ -202,6 +208,7 @@ export class NumerixApp {
       if (screenId === 'thermalx-config') trail.push({ label: 'Laptop Simulation', screen: 'thermalx-config' });
       if (screenId === 'thermalx-solver') trail.push({ label: 'Solving Temperature Field', screen: 'thermalx-solver' });
       if (screenId === 'thermalx-results') trail.push({ label: 'Simulation Results', screen: 'thermalx-results' });
+      if (screenId === 'thermalx-curves') trail.push({ label: 'Graphical Analytics', screen: 'thermalx-curves' });
       if (screenId === 'thermalx-custom') trail.push({ label: 'Custom Grid Designer', screen: 'thermalx-custom' });
       if (screenId === 'thermalx-challenge') trail.push({ label: 'Thermal Challenge', screen: 'thermalx-challenge' });
     } else if (screenId.startsWith('linkrank')) {
@@ -1123,6 +1130,752 @@ export class NumerixApp {
       ctx.textAlign = 'center';
       ctx.fillText(`${maxPt.temp.toFixed(1)}°C`, maxPt.x, maxPt.y - 7);
     }
+  }
+
+  // =========================================================================
+  // --- DEDICATED GRAPHICAL ANALYTICS DASHBOARD (VIEW GRAPHICALLY) ---
+  // =========================================================================
+
+  switchGraphicalTab(tab) {
+    this.synth.click();
+    this.graphicalTab = tab;
+
+    const multiBtn = document.getElementById('graphTabMultiBtn');
+    const singleBtn = document.getElementById('graphTabSingleBtn');
+    const multiPanel = document.getElementById('graphPanelMulti');
+    const singlePanel = document.getElementById('graphPanelSingle');
+
+    if (tab === 'multi') {
+      if (multiBtn) {
+        multiBtn.className = 'px-4 py-2 rounded-xl text-xs font-heading font-bold flex items-center gap-2 bg-primary/20 text-cyan-300 border border-primary/40 transition-all shadow-md';
+      }
+      if (singleBtn) {
+        singleBtn.className = 'px-4 py-2 rounded-xl text-xs font-mono text-on-surface-variant hover:text-white border border-transparent hover:border-white/10 flex items-center gap-2 transition-all';
+      }
+      if (multiPanel) multiPanel.classList.remove('hidden');
+      if (singlePanel) singlePanel.classList.add('hidden');
+      requestAnimationFrame(() => this.renderMultiRunEnvelopeGraph());
+    } else {
+      if (singleBtn) {
+        singleBtn.className = 'px-4 py-2 rounded-xl text-xs font-heading font-bold flex items-center gap-2 bg-amber-500/20 text-amber-300 border border-amber-500/40 transition-all shadow-md';
+      }
+      if (multiBtn) {
+        multiBtn.className = 'px-4 py-2 rounded-xl text-xs font-mono text-on-surface-variant hover:text-white border border-transparent hover:border-white/10 flex items-center gap-2 transition-all';
+      }
+      if (multiPanel) multiPanel.classList.add('hidden');
+      if (singlePanel) singlePanel.classList.remove('hidden');
+      requestAnimationFrame(() => this.renderSingleRunGradientGraph());
+    }
+  }
+
+  renderGraphicalScreen() {
+    // 1. Ensure baseline runs exist so graphs are immediately populated
+    if (this.runHistory.length === 0) {
+      const { rows, cols } = this.getGridDimensions(this.thermalConfig.resolution || 'medium');
+      // Baseline Run 1: Standard Balanced (CPU 85°C, Cooling 60%)
+      const tg1 = new ThermalGrid(rows, cols, 25.0);
+      tg1.setupLaptopTopology(85.0, 74.4, 40.0, 0.6);
+      let g1 = tg1.cloneGrid(tg1.grid);
+      for (let i = 0; i < 35; i++) {
+        const res = tg1.iterateGaussSeidel(g1);
+        g1 = res.nextGrid;
+        if (res.maxError < 0.005) break;
+      }
+      const st1 = tg1.calculateStatistics(g1);
+      this.runHistory.push({
+        runIndex: 1,
+        time: 'Run 1 (Baseline)',
+        cpu: 85.0,
+        gpu: 74.4,
+        cooling: 60,
+        solver: 'gauss-seidel',
+        maxTemp: st1.maxTemp,
+        avgTemp: st1.avgTemp,
+        deltaMax: 0,
+        deltaAvg: 0,
+        deltaCpu: 0,
+        deltaCool: 0,
+        iterations: 35,
+        grid: g1
+      });
+
+      // Baseline Run 2: Heavy Load (CPU 95°C, Cooling 45%)
+      const tg2 = new ThermalGrid(rows, cols, 25.0);
+      tg2.setupLaptopTopology(95.0, 82.0, 42.0, 0.45);
+      let g2 = tg2.cloneGrid(tg2.grid);
+      for (let i = 0; i < 40; i++) {
+        const res = tg2.iterateGaussSeidel(g2);
+        g2 = res.nextGrid;
+        if (res.maxError < 0.005) break;
+      }
+      const st2 = tg2.calculateStatistics(g2);
+      this.runHistory.push({
+        runIndex: 2,
+        time: 'Run 2 (Heavy Load)',
+        cpu: 95.0,
+        gpu: 82.0,
+        cooling: 45,
+        solver: 'gauss-seidel',
+        maxTemp: st2.maxTemp,
+        avgTemp: st2.avgTemp,
+        deltaMax: st2.maxTemp - st1.maxTemp,
+        deltaAvg: st2.avgTemp - st1.avgTemp,
+        deltaCpu: 10,
+        deltaCool: -15,
+        iterations: 40,
+        grid: g2
+      });
+
+      if (!this.thermalGrid) {
+        this.thermalGrid = tg1;
+        this.thermalGrid.grid = g1;
+      }
+    }
+
+    // 2. Initialize active runs set with all runs by default
+    if (this.graphicalActiveRuns.size === 0) {
+      this.runHistory.forEach(r => this.graphicalActiveRuns.add(r.runIndex));
+    } else {
+      // Ensure any newly added run is checked
+      this.runHistory.forEach(r => this.graphicalActiveRuns.add(r.runIndex));
+    }
+
+    // 3. Populate Multi-Run toggle checkboxes
+    const container = document.getElementById('multiRunCheckboxesContainer');
+    if (container) {
+      container.innerHTML = this.runHistory.map(r => {
+        const isChecked = this.graphicalActiveRuns.has(r.runIndex);
+        return `
+          <label class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-dim border ${isChecked ? 'border-primary/50 text-cyan-300' : 'border-white/10 text-on-surface-variant'} text-xs font-mono cursor-pointer select-none transition-colors">
+            <input type="checkbox" value="${r.runIndex}" ${isChecked ? 'checked' : ''} onchange="app.toggleGraphicalRun(${r.runIndex}, this.checked)" class="rounded bg-surface-card border-white/20 text-primary focus:ring-0">
+            <span>Run #${r.runIndex}</span>
+            <span class="text-[10px] ${r.maxTemp > 80 ? 'text-red-400' : 'text-emerald-400'}">(${r.maxTemp.toFixed(1)}°C)</span>
+          </label>
+        `;
+      }).join('');
+    }
+
+    // 4. Populate Single-Run Dropdown
+    const select = document.getElementById('singleRunSelect');
+    if (select) {
+      const selectedVal = this.graphicalSelectedRunIdx || this.runHistory[this.runHistory.length - 1].runIndex;
+      select.innerHTML = this.runHistory.map(r => `
+        <option value="${r.runIndex}" ${r.runIndex === selectedVal ? 'selected' : ''}>
+          Run #${r.runIndex} (${r.time}) - Peak ${r.maxTemp.toFixed(1)}°C
+        </option>
+      `).join('');
+      this.graphicalSelectedRunIdx = selectedVal;
+    }
+
+    // 5. Setup Slice Row Slider bounds
+    const slider = document.getElementById('singleRunSliceSlider');
+    const badge = document.getElementById('singleRunSliceRowBadge');
+    const gridRows = this.thermalGrid && this.thermalGrid.rows ? this.thermalGrid.rows : (this.runHistory[0].grid.length || 24);
+    if (slider) {
+      slider.max = gridRows - 1;
+      if (this.graphicalSliceRow >= gridRows) this.graphicalSliceRow = Math.floor(gridRows / 2);
+      slider.value = this.graphicalSliceRow;
+    }
+    if (badge) {
+      badge.textContent = `Y = ${this.graphicalSliceRow}`;
+    }
+
+    // 6. Render current active tab
+    if (this.graphicalTab === 'multi') {
+      this.switchGraphicalTab('multi');
+    } else {
+      this.switchGraphicalTab('single');
+    }
+  }
+
+  toggleGraphicalRun(runIdx, isChecked) {
+    if (isChecked) {
+      this.graphicalActiveRuns.add(runIdx);
+    } else {
+      if (this.graphicalActiveRuns.size > 1) {
+        this.graphicalActiveRuns.delete(runIdx);
+      } else {
+        // Keep at least one run active
+        const chk = document.querySelector(`#multiRunCheckboxesContainer input[value="${runIdx}"]`);
+        if (chk) chk.checked = true;
+        return;
+      }
+    }
+    this.renderMultiRunEnvelopeGraph();
+  }
+
+  onSingleRunSliderInput(val) {
+    this.graphicalSliceRow = parseInt(val, 10);
+    const badge = document.getElementById('singleRunSliceRowBadge');
+    if (badge) badge.textContent = `Y = ${this.graphicalSliceRow}`;
+    this.renderSingleRunGradientGraph();
+  }
+
+  onSingleRunSelectChange() {
+    const select = document.getElementById('singleRunSelect');
+    if (select) {
+      this.graphicalSelectedRunIdx = parseInt(select.value, 10);
+      this.renderSingleRunGradientGraph();
+    }
+  }
+
+  // --- TAB 1: MULTI-RUN DUAL-ENVELOPE GRAPH (MIN VS MAX CURVES) ---
+  renderMultiRunEnvelopeGraph() {
+    const canvas = document.getElementById('multiRunEnvelopeCanvas');
+    if (!canvas || this.runHistory.length === 0) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width > 0 ? rect.width : 780;
+    const h = rect.height > 0 ? rect.height : 360;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+
+    // Deep cosmic substrate
+    ctx.fillStyle = '#060913';
+    ctx.fillRect(0, 0, w, h);
+
+    const padL = 55;
+    const padR = 40;
+    const padT = 36;
+    const padB = 40;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+
+    const activeRuns = this.runHistory.filter(r => this.graphicalActiveRuns.has(r.runIndex));
+    if (activeRuns.length === 0) return;
+
+    const shadeRibbon = document.getElementById('toggleEnvelopeRibbon')?.checked ?? true;
+    const splineSmooth = document.getElementById('toggleSplineSmooth')?.checked ?? true;
+
+    // Determine temperature domain range across active runs
+    let globalMin = Infinity;
+    let globalMax = -Infinity;
+
+    activeRuns.forEach(r => {
+      if (r.maxTemp > globalMax) globalMax = r.maxTemp;
+      const g = r.grid;
+      for (let row = 0; row < g.length; row++) {
+        for (let col = 0; col < g[row].length; col++) {
+          const val = g[row][col];
+          if (val < globalMin) globalMin = val;
+        }
+      }
+    });
+
+    const yMin = Math.max(15, Math.floor(globalMin - 5));
+    const yMax = Math.min(110, Math.ceil(globalMax + 8));
+
+    // Draw horizontal grid lines & temperature scale
+    const tempStep = 15;
+    for (let t = Math.ceil(yMin / tempStep) * tempStep; t <= yMax; t += tempStep) {
+      const y = padT + plotH - ((t - yMin) / (yMax - yMin)) * plotH;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(w - padR, y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${t}°C`, padL - 8, y + 3.5);
+    }
+
+    // Vertical node guideline ticks
+    const sampleCols = activeRuns[0].grid[0].length;
+    const colStep = Math.max(4, Math.floor(sampleCols / 8));
+    for (let c = 0; c < sampleCols; c += colStep) {
+      const x = padL + (c / (sampleCols - 1)) * plotW;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.beginPath();
+      ctx.moveTo(x, padT);
+      ctx.lineTo(x, padT + plotH);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`X=${c}`, x, padT + plotH + 16);
+    }
+    // Final edge column tick
+    const xEnd = padL + plotW;
+    ctx.fillText(`X=${sampleCols - 1}`, xEnd, padT + plotH + 16);
+
+    // Axis Titles
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.font = 'bold 9px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('SPATIAL CHASSIS / DIE LATERAL POSITION X', padL + plotW / 2, padT + plotH + 32);
+
+    ctx.translate(16, padT + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('TEMPERATURE (°C)', 0, 0);
+    ctx.restore();
+
+    // Helper coordinate converters
+    const getX = (colIdx, colsTotal) => padL + (colIdx / (colsTotal - 1)) * plotW;
+    const getY = (val) => padT + plotH - ((val - yMin) / (yMax - yMin)) * plotH;
+
+    // Palette for distinguishing multiple runs
+    const runColors = [
+      { red: '#ff3b30', blue: '#00f0ff', ribbon: 'rgba(255, 59, 48, 0.12)' },
+      { red: '#ff9500', blue: '#38bdf8', ribbon: 'rgba(255, 149, 0, 0.08)' },
+      { red: '#ec4899', blue: '#818cf8', ribbon: 'rgba(236, 72, 153, 0.08)' },
+      { red: '#f43f5e', blue: '#2dd4bf', ribbon: 'rgba(244, 63, 94, 0.08)' }
+    ];
+
+    // Store plot points for interactive hover
+    const runPlotData = [];
+
+    // Plot each active run
+    activeRuns.forEach((r, runOrder) => {
+      const g = r.grid;
+      const rows = g.length;
+      const cols = g[0].length;
+      const isLatest = runOrder === activeRuns.length - 1;
+      const colorScheme = runColors[runOrder % runColors.length];
+
+      const minCurve = [];
+      const maxCurve = [];
+
+      for (let c = 0; c < cols; c++) {
+        let colMin = Infinity;
+        let colMax = -Infinity;
+        for (let row = 0; row < rows; row++) {
+          const val = g[row][c];
+          if (val < colMin) colMin = val;
+          if (val > colMax) colMax = val;
+        }
+        minCurve.push({ x: getX(c, cols), y: getY(colMin), val: colMin, col: c });
+        maxCurve.push({ x: getX(c, cols), y: getY(colMax), val: colMax, col: c });
+      }
+
+      runPlotData.push({ run: r, minCurve, maxCurve, colorScheme, isLatest });
+
+      // 1. Shaded Thermal Ribbon between Min (Blue) and Max (Red)
+      if (shadeRibbon) {
+        ctx.beginPath();
+        ctx.moveTo(maxCurve[0].x, maxCurve[0].y);
+        if (splineSmooth) {
+          for (let i = 0; i < maxCurve.length - 1; i++) {
+            const xc = (maxCurve[i].x + maxCurve[i + 1].x) / 2;
+            const yc = (maxCurve[i].y + maxCurve[i + 1].y) / 2;
+            ctx.quadraticCurveTo(maxCurve[i].x, maxCurve[i].y, xc, yc);
+          }
+          ctx.lineTo(maxCurve[maxCurve.length - 1].x, maxCurve[maxCurve.length - 1].y);
+
+          // Return along minCurve
+          ctx.lineTo(minCurve[minCurve.length - 1].x, minCurve[minCurve.length - 1].y);
+          for (let i = minCurve.length - 1; i > 0; i--) {
+            const xc = (minCurve[i].x + minCurve[i - 1].x) / 2;
+            const yc = (minCurve[i].y + minCurve[i - 1].y) / 2;
+            ctx.quadraticCurveTo(minCurve[i].x, minCurve[i].y, xc, yc);
+          }
+          ctx.lineTo(minCurve[0].x, minCurve[0].y);
+        } else {
+          maxCurve.forEach(p => ctx.lineTo(p.x, p.y));
+          for (let i = minCurve.length - 1; i >= 0; i--) {
+            ctx.lineTo(minCurve[i].x, minCurve[i].y);
+          }
+        }
+        ctx.closePath();
+
+        const gradRibbon = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+        gradRibbon.addColorStop(0, colorScheme.ribbon);
+        gradRibbon.addColorStop(1, 'rgba(0, 240, 255, 0.03)');
+        ctx.fillStyle = gradRibbon;
+        ctx.fill();
+      }
+
+      // 2. BLUE CURVE: Lowest Temperature Baseline (T_min)
+      ctx.lineWidth = isLatest ? 2.6 : 1.8;
+      ctx.strokeStyle = colorScheme.blue;
+      ctx.shadowColor = colorScheme.blue;
+      ctx.shadowBlur = isLatest ? 8 : 0;
+      ctx.beginPath();
+      if (splineSmooth) {
+        ctx.moveTo(minCurve[0].x, minCurve[0].y);
+        for (let i = 0; i < minCurve.length - 1; i++) {
+          const xc = (minCurve[i].x + minCurve[i + 1].x) / 2;
+          const yc = (minCurve[i].y + minCurve[i + 1].y) / 2;
+          ctx.quadraticCurveTo(minCurve[i].x, minCurve[i].y, xc, yc);
+        }
+        ctx.lineTo(minCurve[minCurve.length - 1].x, minCurve[minCurve.length - 1].y);
+      } else {
+        minCurve.forEach((p, idx) => {
+          if (idx === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        });
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // 3. RED CURVE: Highest Temperature Envelope (T_max) - Low -> High -> Low
+      ctx.lineWidth = isLatest ? 3.0 : 2.0;
+      ctx.strokeStyle = colorScheme.red;
+      ctx.shadowColor = colorScheme.red;
+      ctx.shadowBlur = isLatest ? 12 : 0;
+      ctx.beginPath();
+      if (splineSmooth) {
+        ctx.moveTo(maxCurve[0].x, maxCurve[0].y);
+        for (let i = 0; i < maxCurve.length - 1; i++) {
+          const xc = (maxCurve[i].x + maxCurve[i + 1].x) / 2;
+          const yc = (maxCurve[i].y + maxCurve[i + 1].y) / 2;
+          ctx.quadraticCurveTo(maxCurve[i].x, maxCurve[i].y, xc, yc);
+        }
+        ctx.lineTo(maxCurve[maxCurve.length - 1].x, maxCurve[maxCurve.length - 1].y);
+      } else {
+        maxCurve.forEach((p, idx) => {
+          if (idx === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        });
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Draw node dots on key inflection points (start edge, peak hotspot, end edge)
+      const peakMaxPt = maxCurve.reduce((prev, curr) => curr.val > prev.val ? curr : prev, maxCurve[0]);
+      const minPt = minCurve.reduce((prev, curr) => curr.val < prev.val ? curr : prev, minCurve[0]);
+
+      // Peak Indicator
+      ctx.beginPath();
+      ctx.arc(peakMaxPt.x, peakMaxPt.y, isLatest ? 5.5 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = colorScheme.red;
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Peak Label Badge
+      ctx.fillStyle = 'rgba(6, 9, 19, 0.9)';
+      ctx.strokeStyle = colorScheme.red;
+      ctx.lineWidth = 1;
+      const peakLabel = `Run #${r.runIndex} Max: ${peakMaxPt.val.toFixed(1)}°C`;
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      const ptw = ctx.measureText(peakLabel).width + 12;
+      const badgeY = Math.max(padT + 4, peakMaxPt.y - 18 - runOrder * 16);
+      if (ctx.roundRect) ctx.roundRect(peakMaxPt.x - ptw / 2, badgeY, ptw, 16, 4);
+      else ctx.rect(peakMaxPt.x - ptw / 2, badgeY, ptw, 16);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = colorScheme.red;
+      ctx.textAlign = 'center';
+      ctx.fillText(peakLabel, peakMaxPt.x, badgeY + 11.5);
+    });
+
+    // Update 4 KPI Cards
+    const kpiMin = document.getElementById('multiKpiMinTemp');
+    const kpiMax = document.getElementById('multiKpiMaxTemp');
+    const kpiSpread = document.getElementById('multiKpiSpread');
+    const kpiRuns = document.getElementById('multiKpiRunsCount');
+
+    if (kpiMin) kpiMin.textContent = `${globalMin.toFixed(1)}°C`;
+    if (kpiMax) kpiMax.textContent = `${globalMax.toFixed(1)}°C`;
+    if (kpiSpread) kpiSpread.textContent = `${(globalMax - globalMin).toFixed(1)}°C`;
+    if (kpiRuns) kpiRuns.textContent = `${activeRuns.length} of ${this.runHistory.length}`;
+
+    // Mouseover dynamic crosshair inspector
+    if (!canvas.dataset.boundHover) {
+      canvas.dataset.boundHover = 'true';
+      canvas.addEventListener('mousemove', (e) => {
+        const cRect = canvas.getBoundingClientRect();
+        const mx = e.clientX - cRect.left;
+        const my = e.clientY - cRect.top;
+        if (mx < padL || mx > w - padR || my < padT || my > padT + plotH) {
+          canvas.title = '';
+          return;
+        }
+
+        const colsTotal = activeRuns[0].grid[0].length;
+        const colFraction = (mx - padL) / plotW;
+        const colIdx = Math.max(0, Math.min(colsTotal - 1, Math.round(colFraction * (colsTotal - 1))));
+
+        let tip = `[Node X=${colIdx}]\n`;
+        activeRuns.forEach(r => {
+          let cMin = Infinity, cMax = -Infinity;
+          for (let row = 0; row < r.grid.length; row++) {
+            const v = r.grid[row][colIdx];
+            if (v < cMin) cMin = v;
+            if (v > cMax) cMax = v;
+          }
+          tip += `Run #${r.runIndex}: Red Peak=${cMax.toFixed(1)}°C | Blue Min=${cMin.toFixed(1)}°C (Δ=${(cMax - cMin).toFixed(1)}°C)\n`;
+        });
+        canvas.title = tip;
+      });
+    }
+  }
+
+  // --- TAB 2: SINGLE-RUN SPATIAL GRADIENT (∇T) CROSS-SECTION GRAPH ---
+  renderSingleRunGradientGraph() {
+    const canvas = document.getElementById('singleRunGradientCanvas');
+    if (!canvas || this.runHistory.length === 0) return;
+
+    // 1. Pick target run
+    const targetRunIdx = this.graphicalSelectedRunIdx || this.runHistory[this.runHistory.length - 1].runIndex;
+    const run = this.runHistory.find(r => r.runIndex === targetRunIdx) || this.runHistory[this.runHistory.length - 1];
+
+    const g = run.grid;
+    const rows = g.length;
+    const cols = g[0].length;
+
+    // 2. Pick target row (clamped)
+    const rIdx = Math.max(0, Math.min(rows - 1, this.graphicalSliceRow !== undefined ? this.graphicalSliceRow : Math.floor(rows / 2)));
+    const rowTemps = g[rIdx];
+
+    // 3. Compute spatial temperature gradient |dT/dx|
+    // Node spatial spacing: approx dx = 0.5 cm
+    const dx = 0.5;
+    const gradArr = [];
+    for (let c = 0; c < cols; c++) {
+      let dT;
+      if (c === 0) {
+        dT = Math.abs(rowTemps[1] - rowTemps[0]) / dx;
+      } else if (c === cols - 1) {
+        dT = Math.abs(rowTemps[cols - 1] - rowTemps[cols - 2]) / dx;
+      } else {
+        dT = Math.abs(rowTemps[c + 1] - rowTemps[c - 1]) / (2 * dx);
+      }
+      gradArr.push(dT);
+    }
+
+    const maxTemp = Math.max(...rowTemps);
+    const minTemp = Math.min(...rowTemps);
+    const peakCol = rowTemps.indexOf(maxTemp);
+    const minCol = rowTemps.indexOf(minTemp);
+
+    const maxGrad = Math.max(...gradArr);
+    const maxGradCol = gradArr.indexOf(maxGrad);
+
+    // 4. Update KPI Cards
+    const peakEl = document.getElementById('singlePeakTemp');
+    const peakPos = document.getElementById('singlePeakPos');
+    const minEl = document.getElementById('singleMinTemp');
+    const minPos = document.getElementById('singleMinPos');
+    const gradEl = document.getElementById('singleMaxGrad');
+    const gradPos = document.getElementById('singleMaxGradPos');
+    const fluxEl = document.getElementById('singleMaxFlux');
+
+    if (peakEl) peakEl.textContent = `${maxTemp.toFixed(1)}°C`;
+    if (peakPos) peakPos.textContent = `Node X = ${peakCol}, Y = ${rIdx}`;
+    if (minEl) minEl.textContent = `${minTemp.toFixed(1)}°C`;
+    if (minPos) minPos.textContent = `Node X = ${minCol}, Y = ${rIdx}`;
+    if (gradEl) gradEl.textContent = `${maxGrad.toFixed(2)}`;
+    if (gradPos) gradPos.textContent = `Interface at X = ${maxGradCol}`;
+    if (fluxEl) {
+      // Fourier Law: q = k * |dT/dx|, with k=1.5 W/m-K and dx in cm -> flux in W/m²
+      const conductiveFlux = (maxGrad * 100 * 1.5).toFixed(0);
+      fluxEl.textContent = `${conductiveFlux}`;
+    }
+
+    // 5. Canvas Drawing (Dual Axis)
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width > 0 ? rect.width : 780;
+    const h = rect.height > 0 ? rect.height : 360;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#060913';
+    ctx.fillRect(0, 0, w, h);
+
+    const padL = 55;
+    const padR = 60;
+    const padT = 36;
+    const padB = 40;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+
+    // Scale Y Left (Temperature: 15°C to 105°C)
+    const tMinAxis = 15;
+    const tMaxAxis = Math.max(100, Math.ceil(maxTemp + 10));
+    const getYLeft = (temp) => padT + plotH - ((temp - tMinAxis) / (tMaxAxis - tMinAxis)) * plotH;
+
+    // Scale Y Right (Gradient: 0 to maxGrad * 1.3)
+    const gMinAxis = 0;
+    const gMaxAxis = Math.max(10, Math.ceil(maxGrad * 1.3));
+    const getYRight = (gVal) => padT + plotH - ((gVal - gMinAxis) / (gMaxAxis - gMinAxis)) * plotH;
+
+    const getX = (colIdx) => padL + (colIdx / (cols - 1)) * plotW;
+
+    // Draw Left Grid & Temperature Axis
+    const tempStep = 15;
+    for (let t = 30; t <= tMaxAxis; t += tempStep) {
+      const y = getYLeft(t);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(w - padR, y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${t}°C`, padL - 8, y + 3.5);
+    }
+
+    // Draw Right Axis (Gradient Scale in Amber)
+    const gradStep = Math.max(2, Math.round(gMaxAxis / 4));
+    for (let gr = 0; gr <= gMaxAxis; gr += gradStep) {
+      const y = getYRight(gr);
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = '9.5px JetBrains Mono, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${gr}`, w - padR + 8, y + 3.5);
+    }
+
+    // Right Axis Title
+    ctx.save();
+    ctx.translate(w - 12, padT + plotH / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 9px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('|∇T| GRADIENT (°C/cm)', 0, 0);
+    ctx.restore();
+
+    // Left Axis Title
+    ctx.save();
+    ctx.translate(16, padT + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = '#f87171';
+    ctx.font = 'bold 9px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('TEMPERATURE T(x) (°C)', 0, 0);
+    ctx.restore();
+
+    // Bottom Axis: Node X
+    const colStep = Math.max(4, Math.floor(cols / 8));
+    for (let c = 0; c < cols; c += colStep) {
+      const x = getX(c);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`X=${c}`, x, padT + plotH + 16);
+    }
+    ctx.fillText(`X=${cols - 1}`, padL + plotW, padT + plotH + 16);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.font = 'bold 9px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`CUTLINE NODE X (ACROSS ROW Y=${rIdx})`, padL + plotW / 2, padT + plotH + 32);
+
+    // --- CURVE 1: PRIMARY TEMPERATURE PROFILE T(x) ---
+    // Underfill
+    ctx.beginPath();
+    ctx.moveTo(getX(0), padT + plotH);
+    for (let c = 0; c < cols - 1; c++) {
+      const xc = (getX(c) + getX(c + 1)) / 2;
+      const yc = (getYLeft(rowTemps[c]) + getYLeft(rowTemps[c + 1])) / 2;
+      ctx.quadraticCurveTo(getX(c), getYLeft(rowTemps[c]), xc, yc);
+    }
+    ctx.lineTo(getX(cols - 1), getYLeft(rowTemps[cols - 1]));
+    ctx.lineTo(getX(cols - 1), padT + plotH);
+    ctx.closePath();
+
+    const tGrad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+    tGrad.addColorStop(0, 'rgba(239, 68, 68, 0.25)');
+    tGrad.addColorStop(0.6, 'rgba(245, 158, 11, 0.12)');
+    tGrad.addColorStop(1, 'rgba(59, 130, 246, 0.02)');
+    ctx.fillStyle = tGrad;
+    ctx.fill();
+
+    // Stroke
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = '#ef4444';
+    ctx.shadowColor = '#ef4444';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getYLeft(rowTemps[0]));
+    for (let c = 0; c < cols - 1; c++) {
+      const xc = (getX(c) + getX(c + 1)) / 2;
+      const yc = (getYLeft(rowTemps[c]) + getYLeft(rowTemps[c + 1])) / 2;
+      ctx.quadraticCurveTo(getX(c), getYLeft(rowTemps[c]), xc, yc);
+    }
+    ctx.lineTo(getX(cols - 1), getYLeft(rowTemps[cols - 1]));
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // --- CURVE 2: SECONDARY TEMPERATURE GRADIENT |∇T(x)| CURVE ---
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = '#fbbf24';
+    ctx.shadowColor = '#fbbf24';
+    ctx.shadowBlur = 8;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getYRight(gradArr[0]));
+    for (let c = 0; c < cols - 1; c++) {
+      const xc = (getX(c) + getX(c + 1)) / 2;
+      const yc = (getYRight(gradArr[c]) + getYRight(gradArr[c + 1])) / 2;
+      ctx.quadraticCurveTo(getX(c), getYRight(gradArr[c]), xc, yc);
+    }
+    ctx.lineTo(getX(cols - 1), getYRight(gradArr[cols - 1]));
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Mark Peak Temperature Point
+    const px = getX(peakCol);
+    const py = getYLeft(maxTemp);
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#ef4444';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(6, 9, 19, 0.9)';
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 1;
+    const tBadge = `Peak T: ${maxTemp.toFixed(1)}°C`;
+    ctx.font = 'bold 9px JetBrains Mono, monospace';
+    const tbw = ctx.measureText(tBadge).width + 12;
+    if (ctx.roundRect) ctx.roundRect(px - tbw / 2, py - 24, tbw, 16, 4);
+    else ctx.rect(px - tbw / 2, py - 24, tbw, 16);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#ef4444';
+    ctx.textAlign = 'center';
+    ctx.fillText(tBadge, px, py - 12.5);
+
+    // Mark Peak Gradient Interface Point
+    const gx = getX(maxGradCol);
+    const gy = getYRight(maxGrad);
+    ctx.beginPath();
+    ctx.arc(gx, gy, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(6, 9, 19, 0.9)';
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 1;
+    const gBadge = `Max |∇T|: ${maxGrad.toFixed(2)} °C/cm`;
+    const gbw = ctx.measureText(gBadge).width + 12;
+    const gBadgeY = Math.min(plotH + padT - 20, gy + 14);
+    if (ctx.roundRect) ctx.roundRect(gx - gbw / 2, gBadgeY, gbw, 16, 4);
+    else ctx.rect(gx - gbw / 2, gBadgeY, gbw, 16);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fbbf24';
+    ctx.textAlign = 'center';
+    ctx.fillText(gBadge, gx, gBadgeY + 11.5);
   }
 
   // --- CUSTOM GRID SETUP ---

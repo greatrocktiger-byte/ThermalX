@@ -73,6 +73,10 @@
         <span>THERMALX FLAGSHIP</span>
       </button>
       <button onclick="app.navigate('thermalx-config')" class="px-2.5 py-1 rounded-lg text-xs font-mono text-on-surface-variant hover:text-white transition">Laptop Model</button>
+      <button onclick="app.navigate('thermalx-curves')" class="px-2.5 py-1 rounded-lg text-xs font-mono text-cyan-300 hover:text-cyan-200 border border-cyan-500/30 bg-cyan-950/40 hover:border-cyan-400 flex items-center gap-1 transition shadow-sm">
+        <span class="material-symbols-outlined text-[15px] text-cyan-400">insights</span>
+        <span>View Graphically</span>
+      </button>
       <button onclick="app.navigate('thermalx-custom')" class="px-2.5 py-1 rounded-lg text-xs font-mono text-on-surface-variant hover:text-white transition">Custom CAD</button>
       <button onclick="app.navigate('thermalx-challenge')" class="px-2.5 py-1 rounded-lg text-xs font-mono text-on-surface-variant hover:text-white transition">Challenges</button>
     </nav>
@@ -647,6 +651,10 @@
           </div>
 
           <div class="flex items-center gap-3">
+            <button onclick="app.navigate('thermalx-curves')" class="px-4 py-2 rounded-xl bg-cyan-950/70 border border-cyan-500/40 hover:border-cyan-400 text-xs font-mono text-cyan-300 font-bold flex items-center gap-1.5 transition-all shadow-lg shadow-cyan-500/10">
+              <span class="material-symbols-outlined text-[16px] text-cyan-400">insights</span>
+              <span>View Graphically</span>
+            </button>
             <button id="showThermalMathBtn" class="px-4 py-2 rounded-xl bg-surface-low border border-white/10 hover:border-primary/40 text-xs font-mono text-white flex items-center gap-1.5 transition-all">
               <span class="material-symbols-outlined text-[16px] text-primary">functions</span>
               <span>Show the Math</span>
@@ -901,6 +909,258 @@
             <div class="flex items-center justify-between text-[10px] font-mono text-on-surface-variant">
               <span>Hover or click any run node on the graph to inspect that historical run's parameters</span>
               <span id="historyRunsCount" class="text-primary font-bold">1 Run Recorded</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1.5.5 THERMALX GRAPHICAL ANALYTICS SCREEN (MULTI-RUN & SPATIAL GRADIENT) -->
+    <section id="thermalx-curves" class="tab-screen">
+      <div class="flex flex-col gap-6">
+        <!-- Header & Nav Buttons -->
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-5">
+          <div>
+            <div class="flex items-center gap-3">
+              <span class="w-3 h-3 rounded-full bg-cyan-400 animate-pulse"></span>
+              <h2 class="font-heading font-extrabold text-2xl sm:text-3xl text-white">Graphical Temperature &amp; Gradient Analytics</h2>
+              <span class="px-3 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                ADVANCED ANALYTICS
+              </span>
+            </div>
+            <p class="text-xs text-on-surface-variant mt-1.5">
+              Dual-Envelope Low vs Peak Temperature Curves across multiple runs &amp; 1D Spatial Gradient (&nabla;T) Cutline Profile.
+            </p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button onclick="app.navigate('thermalx-results')" class="px-3.5 py-2 rounded-xl bg-surface-low border border-white/10 hover:border-white/30 text-xs font-mono text-white flex items-center gap-1.5 transition-all">
+              <span class="material-symbols-outlined text-[16px]">heat_pump</span>
+              <span>Back to Heatmap</span>
+            </button>
+            <button onclick="app.navigate('thermalx-config')" class="px-3.5 py-2 rounded-xl bg-secondary-container hover:bg-blue-600 text-xs font-mono text-white flex items-center gap-1.5 transition-all shadow-lg">
+              <span class="material-symbols-outlined text-[16px]">tune</span>
+              <span>New Simulation Run</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mode Toggle Tabs -->
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-surface-card p-2 rounded-2xl border border-white/10">
+          <div class="flex items-center gap-2">
+            <button id="graphTabMultiBtn" onclick="app.switchGraphicalTab('multi')" class="px-4 py-2 rounded-xl text-xs font-heading font-bold flex items-center gap-2 bg-primary/20 text-cyan-300 border border-primary/40 transition-all shadow-md">
+              <span class="material-symbols-outlined text-[17px] text-cyan-400">stacked_line_chart</span>
+              <span>Multi-Run Dual-Envelope Curves (Min vs Max)</span>
+            </button>
+            <button id="graphTabSingleBtn" onclick="app.switchGraphicalTab('single')" class="px-4 py-2 rounded-xl text-xs font-mono text-on-surface-variant hover:text-white border border-transparent hover:border-white/10 flex items-center gap-2 transition-all">
+              <span class="material-symbols-outlined text-[17px] text-amber-400">query_stats</span>
+              <span>Single-Run Spatial Gradient (&nabla;T Profile)</span>
+            </button>
+          </div>
+
+          <!-- Dynamic Context Badge -->
+          <div id="graphicalContextBadge" class="hidden sm:flex items-center gap-2 text-xs font-mono text-on-surface-variant px-3 py-1 rounded-lg bg-surface-dim border border-white/5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span id="graphicalContextText">Gauss-Seidel FDM Steady-State</span>
+          </div>
+        </div>
+
+        <!-- TAB 1: MULTI-RUN DUAL-ENVELOPE CURVES -->
+        <div id="graphPanelMulti" class="flex flex-col gap-6">
+          <div class="p-6 rounded-2xl bg-surface-card border border-primary/30 flex flex-col gap-5 shadow-2xl">
+            <!-- Graph Legend & Explanation -->
+            <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-white/10">
+              <div class="flex flex-col">
+                <span class="text-xs font-heading font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <span class="material-symbols-outlined text-primary text-[18px]">show_chart</span>
+                  <span>Spatial Dual-Envelope Temperature Curves across Runs</span>
+                </span>
+                <p class="text-[11px] font-mono text-on-surface-variant mt-0.5">
+                  <strong class="text-blue-400">🔵 Blue Curve:</strong> Lowest Temperature Baseline (T_min edge/ambient floor) &nbsp;|&nbsp; 
+                  <strong class="text-red-400">🔴 Red Curve:</strong> Highest Temperature Envelope (T_max rising low &rarr; high peak &rarr; low)
+                </p>
+              </div>
+
+              <!-- Multi-Run Active Filter Chips -->
+              <div id="multiRunCheckboxesContainer" class="flex flex-wrap items-center gap-2">
+                <!-- Dynamically populated runs -->
+              </div>
+            </div>
+
+            <!-- Canvas Container -->
+            <div class="relative w-full h-80 sm:h-96 bg-[#060913] rounded-xl overflow-hidden border border-white/10 shadow-inner">
+              <canvas id="multiRunEnvelopeCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+            </div>
+
+            <!-- Graph Sub-Toolbar & Controls -->
+            <div class="flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-on-surface-variant pt-2 border-t border-white/5">
+              <div class="flex items-center gap-4">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" id="toggleEnvelopeRibbon" checked onchange="app.renderMultiRunEnvelopeGraph()" class="rounded bg-surface-dim border-white/20 text-primary focus:ring-0">
+                  <span class="text-white">Shade Thermal Spread Ribbon (T_max - T_min)</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" id="toggleSplineSmooth" checked onchange="app.renderMultiRunEnvelopeGraph()" class="rounded bg-surface-dim border-white/20 text-primary focus:ring-0">
+                  <span class="text-white">Continuous Bezier Spline</span>
+                </label>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="text-[11px]">X-Axis: Spatial Domain Node Index (0 &rarr; X_max)</span>
+                <span class="text-[11px]">Y-Axis: Temperature (°C)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4 Multi-Run Comparative Metric Cards -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="p-4 rounded-xl bg-surface-card border border-blue-500/30 flex flex-col gap-1 shadow-lg">
+              <span class="text-[11px] font-mono text-blue-300 uppercase flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+                <span>Lowest Temperature (T_min)</span>
+              </span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="multiKpiMinTemp" class="font-heading font-extrabold text-2xl text-blue-400">--</span>
+                <span class="text-xs font-mono text-on-surface-variant">Cold Floor</span>
+              </div>
+              <span id="multiKpiMinSub" class="text-[10px] font-mono text-on-surface-variant mt-1">Ambient sink &amp; cooling vents</span>
+            </div>
+
+            <div class="p-4 rounded-xl bg-surface-card border border-red-500/30 flex flex-col gap-1 shadow-lg">
+              <span class="text-[11px] font-mono text-red-300 uppercase flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-red-400"></span>
+                <span>Highest Temperature (T_max)</span>
+              </span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="multiKpiMaxTemp" class="font-heading font-extrabold text-2xl text-red-400">--</span>
+                <span class="text-xs font-mono text-on-surface-variant">Hotspot Peak</span>
+              </div>
+              <span id="multiKpiMaxSub" class="text-[10px] font-mono text-on-surface-variant mt-1">Die center thermal core</span>
+            </div>
+
+            <div class="p-4 rounded-xl bg-surface-card border border-amber-500/30 flex flex-col gap-1 shadow-lg">
+              <span class="text-[11px] font-mono text-amber-300 uppercase flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span>Thermal Spread (&Delta;T Spread)</span>
+              </span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="multiKpiSpread" class="font-heading font-extrabold text-2xl text-amber-400">--</span>
+                <span class="text-xs font-mono text-on-surface-variant">Peak - Floor</span>
+              </div>
+              <span id="multiKpiSpreadSub" class="text-[10px] font-mono text-on-surface-variant mt-1">Total domain thermal excursion</span>
+            </div>
+
+            <div class="p-4 rounded-xl bg-surface-card border border-cyan-500/30 flex flex-col gap-1 shadow-lg">
+              <span class="text-[11px] font-mono text-cyan-300 uppercase flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                <span>Simulation Runs Compared</span>
+              </span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="multiKpiRunsCount" class="font-heading font-extrabold text-2xl text-cyan-300">--</span>
+                <span class="text-xs font-mono text-on-surface-variant">Recorded</span>
+              </div>
+              <span id="multiKpiRunsSub" class="text-[10px] font-mono text-on-surface-variant mt-1">Adjust sliders &amp; re-run to stack</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: SINGLE-RUN SPATIAL GRADIENT (∇T) PROFILE -->
+        <div id="graphPanelSingle" class="hidden flex-col gap-6">
+          <div class="p-6 rounded-2xl bg-surface-card border border-primary/30 flex flex-col gap-5 shadow-2xl">
+            <!-- Cutline Slice Scrubbing & Selection Controls -->
+            <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-white/10">
+              <div class="flex flex-col">
+                <span class="text-xs font-heading font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <span class="material-symbols-outlined text-amber-400 text-[18px]">query_stats</span>
+                  <span>Spatial Temperature &amp; Thermal Gradient (&nabla;T) Cross-Section</span>
+                </span>
+                <p class="text-[11px] font-mono text-on-surface-variant mt-0.5">
+                  <strong class="text-red-400">🔴 Red/Rainbow Curve:</strong> Spatial Temperature T(x) &nbsp;|&nbsp; 
+                  <strong class="text-amber-400">⚡ Amber Curve:</strong> Temperature Gradient |&nabla;T| = |&part;T/&part;x| (°C/cm)
+                </p>
+              </div>
+
+              <!-- Run Selector Dropdown & Row Slider -->
+              <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-mono text-on-surface-variant">Run:</span>
+                  <select id="singleRunSelect" onchange="app.onSingleRunSelectChange()" class="px-2.5 py-1 rounded-lg bg-surface-dim border border-white/10 text-xs font-mono text-white focus:outline-none focus:border-primary">
+                    <!-- Populated dynamically -->
+                  </select>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-mono text-on-surface-variant">Slice Row Y:</span>
+                  <input type="range" id="singleRunSliceSlider" min="0" max="23" value="11" oninput="app.onSingleRunSliderInput(this.value)" class="w-28 accent-primary cursor-pointer">
+                  <span id="singleRunSliceRowBadge" class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-primary/20 text-cyan-300 border border-primary/30">Y = 11</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Canvas Container for Dual-Axis Curve & Gradient -->
+            <div class="relative w-full h-80 sm:h-96 bg-[#060913] rounded-xl overflow-hidden border border-white/10 shadow-inner">
+              <canvas id="singleRunGradientCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+            </div>
+
+            <!-- Graph Legend & Mathematical Formula -->
+            <div class="flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-on-surface-variant pt-2 border-t border-white/5">
+              <div class="flex items-center gap-4 text-[11px]">
+                <span class="flex items-center gap-1.5"><span class="w-3 h-1 bg-gradient-to-r from-blue-500 via-amber-500 to-red-500 rounded"></span><span class="text-white">T(x) Profile (Left Axis, °C)</span></span>
+                <span class="flex items-center gap-1.5"><span class="w-3 h-1 bg-amber-400 rounded"></span><span class="text-amber-300">|&nabla;T(x)| Gradient (Right Axis, °C/cm)</span></span>
+                <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-red-400"></span><span class="text-on-surface-variant">Max Steepness Interface</span></span>
+              </div>
+              <div class="text-[11px] font-mono text-cyan-300">
+                <span>Fourier Law: q_x = -k &middot; (&part;T/&part;x)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4 Single-Run Telemetry Metric Cards -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="p-4 rounded-xl bg-surface-card border border-red-500/30 flex flex-col gap-1 shadow-lg">
+              <span class="text-[11px] font-mono text-red-300 uppercase flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-red-400"></span>
+                <span>Peak Cutline Temp</span>
+              </span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="singlePeakTemp" class="font-heading font-extrabold text-2xl text-red-400">--</span>
+                <span class="text-xs font-mono text-on-surface-variant">at center core</span>
+              </div>
+              <span id="singlePeakPos" class="text-[10px] font-mono text-on-surface-variant mt-1">Node X = --</span>
+            </div>
+
+            <div class="p-4 rounded-xl bg-surface-card border border-blue-500/30 flex flex-col gap-1 shadow-lg">
+              <span class="text-[11px] font-mono text-blue-300 uppercase flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+                <span>Cold Edge Temp</span>
+              </span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="singleMinTemp" class="font-heading font-extrabold text-2xl text-blue-400">--</span>
+                <span class="text-xs font-mono text-on-surface-variant">perimeter</span>
+              </div>
+              <span id="singleMinPos" class="text-[10px] font-mono text-on-surface-variant mt-1">Node X = --</span>
+            </div>
+
+            <div class="p-4 rounded-xl bg-surface-card border border-amber-500/30 flex flex-col gap-1 shadow-lg">
+              <span class="text-[11px] font-mono text-amber-300 uppercase flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span>Max Gradient Steepness</span>
+              </span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="singleMaxGrad" class="font-heading font-extrabold text-2xl text-amber-400">--</span>
+                <span class="text-xs font-mono text-on-surface-variant">°C/cm</span>
+              </div>
+              <span id="singleMaxGradPos" class="text-[10px] font-mono text-on-surface-variant mt-1">Thermal boundary stress</span>
+            </div>
+
+            <div class="p-4 rounded-xl bg-surface-card border border-emerald-500/30 flex flex-col gap-1 shadow-lg">
+              <span class="text-[11px] font-mono text-emerald-300 uppercase flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span>Peak Heat Flux (Conductive)</span>
+              </span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="singleMaxFlux" class="font-heading font-extrabold text-2xl text-emerald-400">--</span>
+                <span class="text-xs font-mono text-on-surface-variant">W/m²</span>
+              </div>
+              <span class="text-[10px] font-mono text-on-surface-variant mt-1">k = 1.5 W/m·K (FR4 substrate)</span>
             </div>
           </div>
         </div>
