@@ -26,6 +26,7 @@ from thermal_solver import ThermalGrid2D
 from gradient_quiver_plotter import plot_thermal_telemetry_dashboard
 from bisection_optimizer import optimize_cooling_bisection
 from syllabus_verification import verify_youngs_theorem
+from run_history_analyzer import run_parametric_drift_experiment
 
 
 BANNER = r"""
@@ -111,12 +112,21 @@ def launch_web_ui():
     webbrowser.open(f"file:///{os.path.abspath(index_path)}")
 
 
+def run_drift_analysis():
+    print("\n" + "=" * 70)
+    print(" [MODULE 5] MULTI-RUN TEMPERATURE DRIFT & ΔT SENSITIVITY EXPERIMENT")
+    print("=" * 70)
+    out_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "delta_t_analysis_dashboard.png")
+    run_parametric_drift_experiment(save_path=out_file)
+
+
 def run_all():
     print(BANNER)
     grid = run_solver_benchmark()
     run_plot_telemetry(grid)
     run_bisection()
     run_proofs()
+    run_drift_analysis()
     print("\n" + "=" * 75)
     print(" [ALL SIMULATIONS COMPLETED SUCCESSFULLY] ALL SYLLABUS CRITERIA MET!")
     print("=" * 75)
@@ -130,13 +140,14 @@ def interactive_menu():
         print("  [2] Compute & Plot Heat Flux Quiver Field & 1D Profile (Generates PNG)")
         print("  [3] Run Bisection Method Cooling Optimization (Root-Finding)")
         print("  [4] Verify Syllabus Mathematical Theorems (Young's Theorem Proof)")
-        print("  [5] Run Complete Suite & Generate Full Telemetry")
-        print("  [6] Open ThermalX Web App in Browser")
+        print("  [5] Multi-Run Temperature Drift & ΔT Comparison (Generates PNG)")
+        print("  [6] Run Complete Suite & Generate Full Telemetry")
+        print("  [7] Open ThermalX Web App in Browser")
         print("  [0] Exit")
 
-        choice = input("\nEnter choice (0-6) [default: 5]: ").strip()
+        choice = input("\nEnter choice (0-7) [default: 6]: ").strip()
         if not choice:
-            choice = '5'
+            choice = '6'
 
         if choice == '1':
             run_solver_benchmark()
@@ -147,14 +158,16 @@ def interactive_menu():
         elif choice == '4':
             run_proofs()
         elif choice == '5':
-            run_all()
+            run_drift_analysis()
         elif choice == '6':
+            run_all()
+        elif choice == '7':
             launch_web_ui()
         elif choice == '0':
             print("\nExiting ThermalX. Good luck with the viva!\n")
             break
         else:
-            print("Invalid selection. Please choose 0 to 6.")
+            print("Invalid selection. Please choose 0 to 7.")
 
 
 def main():

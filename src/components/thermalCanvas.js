@@ -115,11 +115,45 @@ export class ThermalCanvas {
       g = Math.round(152 + f * (42 - 152));
       b = Math.round(0 + f * (0 - 0));
     }
+    this.diffGrid = null;
+    this.isDiffMode = false;
+
     return [r, g, b];
   }
 
+  // Differential Spectrum for ΔT Heatmap:
+  // -20°C (Cooled: Cryo Cyan #00f0ff) -> 0°C (Neutral Slate #141b2d) -> +20°C (Heated: Fiery Red #ff2a00)
+  getDiffRGB(delta) {
+    const clamped = Math.max(-20, Math.min(20, delta));
+    if (clamped < -0.3) {
+      const f = Math.min(1, Math.abs(clamped) / 15);
+      return [
+        Math.round(15 + (1 - f) * 10),
+        Math.round(140 + f * (240 - 140)),
+        255
+      ];
+    } else if (clamped > 0.3) {
+      const f = Math.min(1, clamped / 15);
+      return [
+        255,
+        Math.round(40 + (1 - f) * 120),
+        Math.round(20 * (1 - f))
+      ];
+    } else {
+      // Neutral zero delta
+      return [16, 23, 40];
+    }
+  }
+
+  toggleDiffMode(diffGrid) {
+    this.isDiffMode = !this.isDiffMode;
+    this.diffGrid = this.isDiffMode ? diffGrid : null;
+    this.render();
+    return this.isDiffMode;
+  }
+
   getThermalColor(temp) {
-    const [r, g, b] = this.getThermalRGB(temp);
+    const [r, g, b] = this.isDiffMode ? this.getDiffRGB(temp) : this.getThermalRGB(temp);
     return `rgb(${r}, ${g}, ${b})`;
   }
 
@@ -158,10 +192,12 @@ export class ThermalCanvas {
       const imgData = this.offscreenCtx.createImageData(cols, rows);
       const data = imgData.data;
 
+      const activeGrid = (this.isDiffMode && this.diffGrid) ? this.diffGrid : this.grid;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const idx = (r * cols + c) * 4;
-          const [red, green, blue] = this.getThermalRGB(this.grid[r][c]);
+          const val = activeGrid[r][c];
+          const [red, green, blue] = this.isDiffMode ? this.getDiffRGB(val) : this.getThermalRGB(val);
           data[idx] = red;
           data[idx + 1] = green;
           data[idx + 2] = blue;
@@ -175,9 +211,10 @@ export class ThermalCanvas {
       ctx.drawImage(this.offscreenCanvas, 0, 0, w, h);
     } else {
       // --- RAW FINITE-DIFFERENCE MESH VIEW ---
+      const activeGrid = (this.isDiffMode && this.diffGrid) ? this.diffGrid : this.grid;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          ctx.fillStyle = this.getThermalColor(this.grid[r][c]);
+          ctx.fillStyle = this.getThermalColor(activeGrid[r][c]);
           ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
         }
       }
@@ -217,6 +254,23 @@ export class ThermalCanvas {
     }
     if (this.showSlice) {
       this.renderSliceCutline(cellW, cellH, w, cols);
+    }
+
+    if (this.isDiffMode) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.90)';
+      ctx.strokeStyle = '#00f0ff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(12, 12, 270, 26, 6);
+      else ctx.rect(12, 12, 270, 26);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#00f0ff';
+      ctx.font = 'bold 11px JetBrains Mono, monospace';
+      ctx.fillText('DIFF MODE: ΔT = Current - Previous', 22, 29);
+      ctx.restore();
     }
 
     // --- INTERACTIVE HOVER PROBE HUD ---

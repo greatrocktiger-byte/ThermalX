@@ -83,6 +83,8 @@ export class NumerixApp {
     this.customTool = 'heat';
     this.customToolTemp = 90;
     this.customSelectedCell = null;
+    this.runHistory = [];
+    this.selectedHistoryRun = null;
 
     // LinkRank State
     this.currentCategory = 'technology';
@@ -284,6 +286,7 @@ export class NumerixApp {
             this.thermalConfig[s.key] = val;
             if (valEl) valEl.textContent = `${val}${s.unit}`;
           }
+          this.updatePredictiveDeltaGraph();
         });
       }
     });
@@ -294,6 +297,7 @@ export class NumerixApp {
         document.querySelectorAll('.res-btn').forEach(b => b.classList.remove('bg-primary-container', 'text-on-primary-container'));
         btn.classList.add('bg-primary-container', 'text-on-primary-container');
         this.thermalConfig.resolution = btn.dataset.res;
+        this.updatePredictiveDeltaGraph();
       });
     });
 
@@ -310,6 +314,9 @@ export class NumerixApp {
     if (runBtn) {
       runBtn.addEventListener('click', () => this.runThermalSimulation());
     }
+
+    // Initial draw of predictive response curve
+    setTimeout(() => this.updatePredictiveDeltaGraph(), 100);
   }
 
   syncThermalConfigUI() {
@@ -323,6 +330,7 @@ export class NumerixApp {
     document.getElementById('batteryVal').textContent = `${this.thermalConfig.battery}°C`;
     document.getElementById('coolingSlider').value = Math.round(this.thermalConfig.cooling * 100);
     document.getElementById('coolingVal').textContent = `${Math.round(this.thermalConfig.cooling * 100)}%`;
+    this.updatePredictiveDeltaGraph();
   }
 
   getGridDimensions(res) {
@@ -518,8 +526,437 @@ export class NumerixApp {
       badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-500/50';
     }
 
+    // --- RUN-TO-RUN DELTA TEMPERATURE TRACKING ---
+    const prevRun = this.runHistory.length > 0 ? this.runHistory[this.runHistory.length - 1] : null;
+    const deltaMax = prevRun ? (stats.maxTemp - prevRun.maxTemp) : 0;
+    const deltaAvg = prevRun ? (stats.avgTemp - prevRun.avgTemp) : 0;
+    const deltaCpu = prevRun ? (this.thermalConfig.cpu - prevRun.cpu) : 0;
+    const deltaCool = prevRun ? (Math.round(this.thermalConfig.cooling * 100) - prevRun.cooling) : 0;
+
+    const runRecord = {
+      runIndex: this.runHistory.length + 1,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      cpu: this.thermalConfig.cpu,
+      gpu: this.thermalConfig.gpu,
+      cooling: Math.round(this.thermalConfig.cooling * 100),
+      solver: this.thermalConfig.solver,
+      maxTemp: stats.maxTemp,
+      avgTemp: stats.avgTemp,
+      deltaMax,
+      deltaAvg,
+      deltaCpu,
+      deltaCool,
+      iterations,
+      grid: this.thermalGrid.cloneGrid(this.thermalGrid.grid)
+    };
+    this.runHistory.push(runRecord);
+
+    // Update Delta Drift Telemetry Cards
+    this.updateDriftKPIs(runRecord, prevRun);
+
     // Render 1D Cross-Section profile for initial view
     this.renderSliceGraph();
+
+    // Render Run History Evolution Graph
+    this.renderRunHistoryGraph();
+  }
+
+  // --- PREDICTIVE LIVE RESPONSE CURVE (THERMALX-CONFIG) ---
+  updatePredictiveDeltaGraph() {
+    const canvas = document.getElementById('liveConfigCurveCanvas');
+    if (!canvas) return;
+
+    const baseCpu = 85.0;
+    const currentCpu = this.thermalConfig.cpu || 85.0;
+    const cooling = this.thermalConfig.cooling !== undefined ? this.thermalConfig.cooling : 0.6;
+    const delta = currentCpu - baseCpu;
+    const predictedPeak = currentCpu * (1.0 - cooling * 0.12) + (this.thermalConfig.ambient || 25.0) * (cooling * 0.12);
+
+    const badge = document.getElementById('predictiveDeltaBadge');
+    if (badge) {
+      if (delta > 0.05) {
+        badge.className = 'px-2.5 py-0.5 rounded text-[11px] font-bold bg-red-950/80 text-red-400 border border-red-500/40';
+        badge.innerHTML = `▲ +${delta.toFixed(1)}°C vs Base (85°C)`;
+      } else if (delta < -0.05) {
+        badge.className = 'px-2.5 py-0.5 rounded text-[11px] font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/40';
+        badge.innerHTML = `▼ ${delta.toFixed(1)}°C vs Base (85°C)`;
+      } else {
+        badge.className = 'px-2.5 py-0.5 rounded text-[11px] font-bold bg-primary/20 text-cyan-300 border border-primary/30';
+        badge.innerHTML = `0.0°C (Baseline 85°C)`;
+      }
+    }
+
+    const label = document.getElementById('predictiveSteadyStateLabel');
+    if (label) {
+      label.textContent = `Predicted Peak: ${predictedPeak.toFixed(1)}°C (Cooling: ${Math.round(cooling * 100)}%)`;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width > 0 ? rect.width : 500;
+    const h = rect.height > 0 ? rect.height : 96;
+    canvas.width = w * window.devicePixelRatio || w;
+    canvas.height = h * window.devicePixelRatio || h;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    // Background
+    ctx.fillStyle = '#060913';
+    ctx.fillRect(0, 0, w, h);
+
+    const padL = 35;
+    const padR = 20;
+    const padT = 12;
+    const padB = 16;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+
+    // Grid lines
+    [25, 50, 75, 100].forEach(t => {
+      const y = padT + plotH - ((t - 20) / 85) * plotH;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(w - padR, y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.font = '8px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${t}°`, padL - 4, y + 3);
+    });
+
+    // Draw theoretical dynamic step response: T(t) = T_amb + (T_ss - T_amb)*(1 - e^(-t / tau))
+    const tau = 8.0 / (0.5 + cooling * 1.5);
+    const steps = 40;
+    const pts = [];
+    const tAmb = this.thermalConfig.ambient || 25.0;
+
+    for (let i = 0; i <= steps; i++) {
+      const t = (i / steps) * 20.0;
+      const temp = tAmb + (predictedPeak - tAmb) * (1.0 - Math.exp(-t / tau));
+      const x = padL + (i / steps) * plotW;
+      const y = padT + plotH - ((temp - 20) / 85) * plotH;
+      pts.push({ x, y, temp });
+    }
+
+    // Gradient fill under predicted curve
+    const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+    grad.addColorStop(0, delta >= 0 ? 'rgba(255, 42, 0, 0.28)' : 'rgba(0, 240, 255, 0.22)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, padT + plotH);
+    pts.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.lineTo(pts[pts.length - 1].x, padT + plotH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Curve line
+    ctx.lineWidth = 2.0;
+    ctx.strokeStyle = delta >= 0 ? '#ff3b30' : '#00f0ff';
+    ctx.beginPath();
+    pts.forEach((p, idx) => {
+      if (idx === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+
+    // End point beacon
+    const endPt = pts[pts.length - 1];
+    ctx.beginPath();
+    ctx.arc(endPt.x, endPt.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = delta >= 0 ? '#ff3b30' : '#00f0ff';
+    ctx.fill();
+  }
+
+  // --- RUN-TO-RUN DELTA TELEMETRY & DRIFT CARDS ---
+  updateDriftKPIs(curr, prev) {
+    const curMaxEl = document.getElementById('driftCurrentMax');
+    const badgeMax = document.getElementById('driftBadgeMax');
+    const subMax = document.getElementById('driftSubMax');
+
+    if (curMaxEl) curMaxEl.textContent = `${curr.maxTemp.toFixed(1)}°C`;
+    if (badgeMax) {
+      if (!prev) {
+        badgeMax.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30';
+        badgeMax.textContent = 'Run 1 (Baseline)';
+      } else if (curr.deltaMax > 0.05) {
+        badgeMax.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-red-950/80 text-red-400 border border-red-500/50';
+        badgeMax.innerHTML = `▲ +${curr.deltaMax.toFixed(1)}°C (Hotter)`;
+      } else if (curr.deltaMax < -0.05) {
+        badgeMax.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/50';
+        badgeMax.innerHTML = `▼ ${curr.deltaMax.toFixed(1)}°C (Cooler)`;
+      } else {
+        badgeMax.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-white/10 text-white/80 border border-white/20';
+        badgeMax.textContent = `~ 0.0°C (Stable)`;
+      }
+    }
+    if (subMax) {
+      subMax.textContent = prev ? `Prev: ${prev.maxTemp.toFixed(1)}°C (CPU: ${prev.cpu}°C)` : 'Baseline reference run';
+    }
+
+    const curAvgEl = document.getElementById('driftCurrentAvg');
+    const badgeAvg = document.getElementById('driftBadgeAvg');
+    const subAvg = document.getElementById('driftSubAvg');
+
+    if (curAvgEl) curAvgEl.textContent = `${curr.avgTemp.toFixed(1)}°C`;
+    if (badgeAvg) {
+      if (!prev) {
+        badgeAvg.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30';
+        badgeAvg.textContent = 'Run 1 (Baseline)';
+      } else if (curr.deltaAvg > 0.05) {
+        badgeAvg.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-red-950/80 text-red-400 border border-red-500/50';
+        badgeAvg.innerHTML = `▲ +${curr.deltaAvg.toFixed(1)}°C`;
+      } else if (curr.deltaAvg < -0.05) {
+        badgeAvg.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/50';
+        badgeAvg.innerHTML = `▼ ${curr.deltaAvg.toFixed(1)}°C`;
+      } else {
+        badgeAvg.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-white/10 text-white/80 border border-white/20';
+        badgeAvg.textContent = `~ 0.0°C`;
+      }
+    }
+    if (subAvg) {
+      subAvg.textContent = prev ? `Prev: ${prev.avgTemp.toFixed(1)}°C` : 'Chassis reference baseline';
+    }
+
+    const coolEl = document.getElementById('driftCoolingEffect');
+    const badgeCool = document.getElementById('driftBadgeCool');
+    const subCool = document.getElementById('driftSubCool');
+
+    if (coolEl) coolEl.textContent = `${curr.cooling}% Convection`;
+    if (badgeCool) {
+      if (curr.deltaCool > 0) {
+        badgeCool.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/40';
+        badgeCool.textContent = `+${curr.deltaCool}% Fan Boost`;
+      } else if (curr.deltaCool < 0) {
+        badgeCool.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-amber-950/80 text-amber-400 border border-amber-500/40';
+        badgeCool.textContent = `${curr.deltaCool}% Fan Reduced`;
+      } else {
+        badgeCool.className = 'px-2 py-0.5 rounded text-xs font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-500/40';
+        badgeCool.textContent = `Convection Constant`;
+      }
+    }
+    if (subCool) {
+      subCool.textContent = `Solver: ${curr.solver.toUpperCase()} (${curr.iterations} sweeps)`;
+    }
+
+    const countLabel = document.getElementById('historyRunsCount');
+    if (countLabel) {
+      countLabel.textContent = `${this.runHistory.length} ${this.runHistory.length === 1 ? 'Run' : 'Runs'} Recorded`;
+    }
+  }
+
+  // --- RUN HISTORY MULTI-NODE GRAPH (CANVAS) ---
+  renderRunHistoryGraph() {
+    const canvas = document.getElementById('runHistoryCanvas');
+    if (!canvas || this.runHistory.length === 0) return;
+
+    const runs = this.runHistory;
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width > 0 ? rect.width : 750;
+    const h = rect.height > 0 ? rect.height : 160;
+    canvas.width = w * window.devicePixelRatio || w;
+    canvas.height = h * window.devicePixelRatio || h;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    // Substrate
+    ctx.fillStyle = '#060913';
+    ctx.fillRect(0, 0, w, h);
+
+    const padL = 45;
+    const padR = 40;
+    const padT = 28;
+    const padB = 26;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+
+    const allTemps = runs.flatMap(r => [r.maxTemp, r.avgTemp]);
+    const minVal = Math.max(20, Math.floor(Math.min(...allTemps) - 5));
+    const maxVal = Math.min(105, Math.ceil(Math.max(...allTemps) + 8));
+
+    // Horizontal Guidelines
+    const step = 15;
+    for (let t = minVal; t <= maxVal; t += step) {
+      const y = padT + plotH - ((t - minVal) / (maxVal - minVal)) * plotH;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(w - padR, y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${t}°C`, padL - 6, y + 3);
+    }
+
+    const n = runs.length;
+    const getX = (idx) => n === 1 ? padL + plotW * 0.5 : padL + (idx / (n - 1)) * plotW;
+    const getY = (val) => padT + plotH - ((val - minVal) / (maxVal - minVal)) * plotH;
+
+    // Draw Line 2: Avg Temp (Cyan)
+    ctx.lineWidth = 1.8;
+    ctx.strokeStyle = '#00f0ff';
+    ctx.beginPath();
+    runs.forEach((r, idx) => {
+      const x = getX(idx);
+      const y = getY(r.avgTemp);
+      if (idx === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Draw Line 1: Max Temp (Red/Orange)
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = '#ff3b30';
+    ctx.beginPath();
+    runs.forEach((r, idx) => {
+      const x = getX(idx);
+      const y = getY(r.maxTemp);
+      if (idx === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Draw Run Points & ΔT Annotations
+    runs.forEach((r, idx) => {
+      const x = getX(idx);
+      const yMax = getY(r.maxTemp);
+      const yAvg = getY(r.avgTemp);
+
+      // Vertical connector dash
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(x, yMax);
+      ctx.lineTo(x, padT + plotH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Avg Temp dot
+      ctx.beginPath();
+      ctx.arc(x, yAvg, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#00f0ff';
+      ctx.fill();
+
+      // Max Temp dot with halo
+      ctx.beginPath();
+      ctx.arc(x, yMax, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff3b30';
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+
+      // Run X Label
+      ctx.fillStyle = '#8899ac';
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`Run #${r.runIndex}`, x, padT + plotH + 16);
+
+      // ΔT Badge above node
+      let badgeText = `${r.maxTemp.toFixed(1)}°C`;
+      let badgeColor = '#ff3b30';
+      if (idx > 0) {
+        if (r.deltaMax > 0.05) {
+          badgeText = `▲ +${r.deltaMax.toFixed(1)}°`;
+          badgeColor = '#ef4444';
+        } else if (r.deltaMax < -0.05) {
+          badgeText = `▼ ${r.deltaMax.toFixed(1)}°`;
+          badgeColor = '#10b981';
+        } else {
+          badgeText = `~ 0.0°`;
+          badgeColor = '#38bdf8';
+        }
+      }
+
+      ctx.fillStyle = 'rgba(10, 15, 28, 0.85)';
+      ctx.strokeStyle = badgeColor;
+      ctx.lineWidth = 1;
+      const tw = ctx.measureText(badgeText).width + 10;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x - tw / 2, yMax - 22, tw, 15, 3);
+      else ctx.rect(x - tw / 2, yMax - 22, tw, 15);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = badgeColor;
+      ctx.font = 'bold 8.5px JetBrains Mono, monospace';
+      ctx.fillText(badgeText, x, yMax - 11);
+    });
+
+    // Interactive canvas click to inspect run
+    if (!canvas.dataset.boundClick) {
+      canvas.dataset.boundClick = 'true';
+      canvas.addEventListener('click', (e) => {
+        const cRect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - cRect.left;
+        const runsArr = this.runHistory;
+        if (runsArr.length < 2) return;
+
+        let closestIdx = 0;
+        let minD = Infinity;
+        runsArr.forEach((_, i) => {
+          const px = getX(i);
+          const d = Math.abs(clickX - px);
+          if (d < minD) { minD = d; closestIdx = i; }
+        });
+
+        if (minD < 35) {
+          this.synth.click();
+          const targetRun = runsArr[closestIdx];
+          const prevOfTarget = closestIdx > 0 ? runsArr[closestIdx - 1] : null;
+          this.updateDriftKPIs(targetRun, prevOfTarget);
+        }
+      });
+    }
+  }
+
+  // --- DIFFERENTIAL HEATMAP TOGGLE (CURRENT vs PREVIOUS RUN) ---
+  toggleDiffHeatmap() {
+    this.synth.click();
+    if (this.runHistory.length < 2) {
+      alert("Please run at least 2 simulations with different slider values (e.g. adjust CPU temp or Fan speed) to visualize the ΔT differential heatmap!");
+      return;
+    }
+
+    const curr = this.runHistory[this.runHistory.length - 1];
+    const prev = this.runHistory[this.runHistory.length - 2];
+    const rows = curr.grid.length;
+    const cols = curr.grid[0].length;
+
+    // Calculate delta grid: ΔT_{i,j} = T_current - T_previous
+    const diffGrid = [];
+    for (let r = 0; r < rows; r++) {
+      const row = [];
+      for (let c = 0; c < cols; c++) {
+        row.push(curr.grid[r][c] - prev.grid[r][c]);
+      }
+      diffGrid.push(row);
+    }
+
+    if (this.thermalCanvasMain) {
+      const isDiff = this.thermalCanvasMain.toggleDiffMode(diffGrid);
+      const btnText = document.getElementById('diffModeBtnText');
+      const btn = document.getElementById('toggleDiffHeatmapBtn');
+      if (btnText) {
+        btnText.textContent = isDiff ? 'Exit ΔT Heatmap (Normal View)' : 'Show ΔT Heatmap (Current - Prev)';
+      }
+      if (btn) {
+        btn.classList.toggle('border-primary', isDiff);
+        btn.classList.toggle('bg-primary/20', isDiff);
+      }
+    }
   }
 
   // --- INNOVATION GRAPHICAL REPRESENTATION CONTROLLERS ---

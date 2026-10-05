@@ -519,6 +519,25 @@
                 <option value="gauss-seidel">Gauss-Seidel (Fast In-Place)</option>
                 <option value="jacobi">Jacobi (Simultaneous)</option>
               </select>
+          <!-- INNOVATION: Live Dynamic Predictive Response Curve & Slider-Driven ΔT Graph -->
+          <div class="p-4 rounded-xl bg-surface-dim border border-primary/20 flex flex-col gap-2.5">
+            <div class="flex items-center justify-between text-xs font-mono">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-[16px] text-primary">trending_up</span>
+                <span class="text-white font-bold">REAL-TIME PREDICTIVE &Delta;T RESPONSE GRAPH</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span id="predictiveDeltaBadge" class="px-2.5 py-0.5 rounded text-[11px] font-bold bg-primary/20 text-cyan-300 border border-primary/30">
+                  &Delta;T vs Base (85°C): 0.0°C
+                </span>
+              </div>
+            </div>
+            <div class="relative w-full h-24 bg-black/40 rounded-lg overflow-hidden border border-white/5">
+              <canvas id="liveConfigCurveCanvas" class="w-full h-full block"></canvas>
+            </div>
+            <div class="flex items-center justify-between text-[11px] font-mono text-on-surface-variant">
+              <span>Slider Sensitivity: Moving sliders recalculates heat flux profile in real-time</span>
+              <span id="predictiveSteadyStateLabel" class="text-white font-semibold">Predicted Peak: 85.0°C</span>
             </div>
           </div>
 
@@ -803,6 +822,85 @@
                 <span class="material-symbols-outlined text-[16px]">download</span>
                 <span>Save Report</span>
               </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- INNOVATION: RUN-TO-RUN TEMPERATURE COMPARISON & ΔT EVOLUTION DASHBOARD -->
+        <div id="resultsHistorySection" class="p-6 rounded-2xl bg-surface-card border border-primary/30 flex flex-col gap-5 shadow-2xl">
+          <div class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
+            <div>
+              <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-950/70 border border-primary/40 text-[11px] font-mono text-cyan-300 mb-1.5">
+                <span class="material-symbols-outlined text-[14px]">history</span>
+                <span>HISTORICAL EXPERIMENTAL RUNS &amp; DELTA TRACKER</span>
+              </div>
+              <h3 class="font-heading font-bold text-xl text-white">Temperature Evolution &amp; &Delta;T Comparison</h3>
+              <p class="text-xs text-on-surface-variant mt-0.5">Visually inspect temperature changes (&Delta;T) across consecutive slider configurations.</p>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <button id="toggleDiffHeatmapBtn" onclick="app.toggleDiffHeatmap()" class="px-3.5 py-1.5 rounded-lg bg-surface-dim border border-white/10 hover:border-cyan-400 text-xs font-mono text-cyan-300 flex items-center gap-1.5 transition-all shadow-md">
+                <span class="material-symbols-outlined text-[16px] text-cyan-400">difference</span>
+                <span id="diffModeBtnText">Show &Delta;T Heatmap (Current - Prev)</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 3 KPI Comparative Delta Cards -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="p-4 rounded-xl bg-surface-dim border border-white/5 flex flex-col gap-1">
+              <span class="text-[11px] font-mono text-on-surface-variant uppercase">Peak Die Temperature Drift</span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="driftCurrentMax" class="font-heading font-extrabold text-2xl text-white">--</span>
+                <span id="driftBadgeMax" class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Base Run
+                </span>
+              </div>
+              <span id="driftSubMax" class="text-[10px] font-mono text-on-surface-variant mt-1">Previous: --</span>
+            </div>
+
+            <div class="p-4 rounded-xl bg-surface-dim border border-white/5 flex flex-col gap-1">
+              <span class="text-[11px] font-mono text-on-surface-variant uppercase">Chassis Avg Temperature Drift</span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="driftCurrentAvg" class="font-heading font-extrabold text-2xl text-white">--</span>
+                <span id="driftBadgeAvg" class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Base Run
+                </span>
+              </div>
+              <span id="driftSubAvg" class="text-[10px] font-mono text-on-surface-variant mt-1">Previous: --</span>
+            </div>
+
+            <div class="p-4 rounded-xl bg-surface-dim border border-white/5 flex flex-col gap-1">
+              <span class="text-[11px] font-mono text-on-surface-variant uppercase">Cooling Sizing Impact</span>
+              <div class="flex items-baseline gap-2 mt-1">
+                <span id="driftCoolingEffect" class="font-heading font-extrabold text-2xl text-cyan-300">--</span>
+                <span id="driftBadgeCool" class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  Convection Active
+                </span>
+              </div>
+              <span id="driftSubCool" class="text-[10px] font-mono text-on-surface-variant mt-1">Airflow dynamic balance</span>
+            </div>
+          </div>
+
+          <!-- Multi-Run Temperature Curve Canvas -->
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between text-xs font-mono">
+              <span class="text-white font-bold flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-[16px] text-primary">ssid_chart</span>
+                <span>RUN HISTORY TEMPERATURE DRIFT GRAPH T(run)</span>
+              </span>
+              <div class="flex items-center gap-4 text-[11px]">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-400"></span><span class="text-on-surface-variant">Peak Die Temp (°C)</span></span>
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span><span class="text-on-surface-variant">Chassis Avg Temp (°C)</span></span>
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span><span class="text-on-surface-variant">&Delta;T Delta Marker</span></span>
+              </div>
+            </div>
+            <div class="relative w-full h-44 bg-surface-dim rounded-xl overflow-hidden border border-white/5">
+              <canvas id="runHistoryCanvas" class="w-full h-full block cursor-pointer"></canvas>
+            </div>
+            <div class="flex items-center justify-between text-[10px] font-mono text-on-surface-variant">
+              <span>Hover or click any run node on the graph to inspect that historical run's parameters</span>
+              <span id="historyRunsCount" class="text-primary font-bold">1 Run Recorded</span>
             </div>
           </div>
         </div>
